@@ -7,6 +7,7 @@ use k8s_openapi::api::autoscaling::v1::Scale;
 use k8s_openapi::api::autoscaling::v1::ScaleSpec;
 use k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
 use k8s_openapi::api::apps::v1::Deployment;
+use k8s_openapi::api::core::v1::Service;
 use tokio::io;
 use tokio::join;
 use tokio::net::{TcpListener, TcpStream};
@@ -84,6 +85,11 @@ async fn main() -> io::Result<()> {
   let target_port: u16 = env::var("TARGET_PORT").expect("PORT is not set").parse().unwrap();
   let target_name: String = env::var("TARGET_NAME").expect("TARGET_NAME is not set");
   let target_namespace: String = env::var("TARGET_NAMESPACE").expect("TARGET_NAMESPACE is not set");
+
+  let client = Client::try_default().await.unwrap();
+  let services: Api<Service> = Api::namespaced(client, &target_namespace);
+  let service = services.get(&target_name).await;
+  dbg!(&service);
 
   let scaler = ZeroScaler {
     name: target_name.into(),
