@@ -1,15 +1,15 @@
+use std::env;
 use std::net::Ipv4Addr;
 use std::sync::{Arc, RwLock};
 
-use kube::{Client, Api};
-use kube::api::PatchParams;
-use kube::api::Patch;
+use kube::{Api, api::{ListParams, Patch, PatchParams, WatchEvent}, Client};
 use k8s_openapi::api::autoscaling::v1::Scale;
 use k8s_openapi::api::autoscaling::v1::ScaleSpec;
 use k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
 use k8s_openapi::api::apps::v1::Deployment;
 use tokio::io;
-use tokio::net::{TcpListener, TcpStream, UdpSocket};
+use tokio::join;
+use tokio::net::{TcpListener, TcpStream};
 use tokio::time::{sleep, sleep_until, Duration, Instant};
 use tokio_stream::wrappers::TcpListenerStream;
 use futures::prelude::*;
@@ -26,21 +26,21 @@ struct ZeroScaler {
 }
 
 impl ZeroScaler {
-  async fn deployments(&self) -> Api<Deployment> {
-    let client = Client::try_default().await.unwrap();
-    Api::namespaced(client, &self.namespace)
+  async fn deployments(&self) -> Result<Api<Deployment>, kube::Error> {
+    let client = Client::try_default().await?;
+    Ok(Api::namespaced(client, &self.namespace))
   }
 
-  async fn scale(&self) -> Scale {
-    self.deployments().await.get_scale(&self.name).await.unwrap()
+  async fn scale(&self) -> Result<Scale, kube::Error> {
+    self.deployments().await?.get_scale(&self.name).await
   }
 
-  async fn replicas(&self) -> i32 {
-    let scale = self.scale().await;
-    scale.spec.and_then(|spec| spec.replicas).unwrap_or(0)
+  async fn replicas(&self) -> Result<i32, kube::Error> {
+    let scale = self.scale().await?;
+    Ok(scale.spec.and_then(|spec| spec.replicas).unwrap_or(0))
   }
 
-  async fn scale_to(&self, replicas: i32) {
+  async fn scale_to(&self, replicas: i32) -> Result<(), kube::Error> {
     let patch_params = PatchParams {
       // dry_run: true,
       force: true,
@@ -55,14 +55,12 @@ impl ZeroScaler {
       }),
       ..Default::default()
     };
-    self.deployments().await.patch_scale(&self.name, &patch_params, &Patch::Apply(patch)).await;
-
-    use kube::{api::{Api, ListParams, ResourceExt, WatchEvent}, Client};
+    self.deployments().await?.patch_scale(&self.name, &patch_params, &Patch::Apply(patch)).await?;
 
     let lp = ListParams::default()
       .fields(&format!("metadata.name={}", self.name));
 
-    let mut stream = self.deployments().await.watch(&lp, "0").await.unwrap().boxed();
+    let mut stream = self.deployments().await?.watch(&lp, "0").await?.boxed();
 
     while let Some(status) = stream.try_next().await.unwrap() {
       match status {
@@ -74,16 +72,18 @@ impl ZeroScaler {
         _ => {},
       }
     }
+
+    Ok(())
   }
 }
 
 #[tokio::main]
 async fn main() -> io::Result<()> {
-  let port = 25565;
-  let target = "10.0.1.23";
-  let target_port = 25565;
-  let target_name = "minecraft-minecraft";
-  let target_namespace = "default";
+  let port: u16 = env::var("PORT").expect("PORT is not set").parse().unwrap();
+  let target: String = env::var("TARGET").expect("TARGET is not set");
+  let target_port: u16 = env::var("TARGET_PORT").expect("PORT is not set").parse().unwrap();
+  let target_name: String = env::var("TARGET_NAME").expect("TARGET_NAME is not set");
+  let target_namespace: String = env::var("TARGET_NAMESPACE").expect("TARGET_NAMESPACE is not set");
 
   let scaler = ZeroScaler {
     name: target_name.into(),
@@ -106,11 +106,9 @@ async fn main() -> io::Result<()> {
       let deadline = last_update + timeout;
       let mut timer = sleep_until(deadline);
       if deadline < Instant::now() {
-        if connection_count == 0 {
-          if scaler.replicas().await > 0 {
-            eprintln!("Reached idle timeout. Scaling down.");
-            scaler.scale_to(0).await;
-          }
+        if connection_count == 0 && scaler.replicas().await.map(|r| r > 0).unwrap_or(false) {
+          eprintln!("Reached idle timeout. Scaling down.");
+          let _ = scaler.scale_to(0).await;
         }
 
         timer = sleep(timeout);
@@ -131,17 +129,24 @@ async fn main() -> io::Result<()> {
       *last_update = Instant::now();
     }
 
-    if scaler.replicas().await == 0 {
+    if scaler.replicas().await.map(|r| r == 0).unwrap_or(false) {
       eprintln!("Received request, scaling up.");
-      scaler.scale_to(1).await;
+      let _ = scaler.scale_to(1).await;
     }
 
     eprintln!("Connecting to upstream server …");
-    match TcpStream::connect((target, target_port)).await {
-      Ok(upstream) => {
-        let _ = proxy(downstream, upstream).await;
-      },
-      Err(err) => (),
+    loop {
+      match TcpStream::connect((target.as_str(), target_port)).await {
+        Ok(upstream) => {
+          let _ = proxy(downstream, upstream).await;
+          break
+        },
+        Err(err) => {
+          eprintln!("Error connecting to upstream server: {}", err);
+          eprintln!("Retrying…");
+          continue
+        },
+      }
     }
 
     {
@@ -153,7 +158,8 @@ async fn main() -> io::Result<()> {
     Ok(())
   });
 
-  tokio::join!(timeout_checker, proxy_server);
+  let (_, proxy_result) = join!(timeout_checker, proxy_server);
+  proxy_result?;
 
   Ok(())
 }
