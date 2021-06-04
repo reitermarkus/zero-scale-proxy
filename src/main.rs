@@ -80,20 +80,24 @@ impl ZeroScaler {
 
 #[tokio::main]
 async fn main() -> io::Result<()> {
-  let port: u16 = env::var("PORT").expect("PORT is not set").parse().unwrap();
-  let target: String = env::var("TARGET").expect("TARGET is not set");
-  let target_port: u16 = env::var("TARGET_PORT").expect("PORT is not set").parse().unwrap();
-  let target_name: String = env::var("TARGET_NAME").expect("TARGET_NAME is not set");
-  let target_namespace: String = env::var("TARGET_NAMESPACE").expect("TARGET_NAMESPACE is not set");
+  let service: String = env::var("SERVICE").expect("SERVICE is not set");
+  let deployment: String = env::var("DEPLOYMENT").expect("DEPLOYMENT is not set");
+  let namespace: String = env::var("NAMESPACE").expect("NAMESPACE is not set");
 
   let client = Client::try_default().await.unwrap();
-  let services: Api<Service> = Api::namespaced(client, &target_namespace);
-  let service = services.get(&target_name).await;
+  let services: Api<Service> = Api::namespaced(client, &namespace);
+  let service = services.get(&service).await.unwrap();
   dbg!(&service);
+  let cluster_ip = service.spec.as_ref().and_then(|s| s.cluster_ip.as_ref()).unwrap();
+  let ports = service.spec.as_ref().and_then(|s| s.ports.as_ref());
+  dbg!(&cluster_ip);
+  dbg!(&ports);
+
+  let port = ports.unwrap().first().unwrap().port as u16;
 
   let scaler = ZeroScaler {
-    name: target_name.into(),
-    namespace: target_namespace.into(),
+    name: deployment.into(),
+    namespace: namespace.into(),
   };
 
   let listener = TcpListener::bind((Ipv4Addr::new(0, 0, 0, 0), port)).await?;
@@ -140,9 +144,9 @@ async fn main() -> io::Result<()> {
       let _ = scaler.scale_to(1).await;
     }
 
-    eprintln!("Connecting to upstream server …");
+    eprintln!("Connecting to upstream server {}:{} …", cluster_ip, port);
     loop {
-      match TcpStream::connect((target.as_str(), target_port)).await {
+      match TcpStream::connect((cluster_ip.as_str(), port)).await {
         Ok(upstream) => {
           let _ = proxy(downstream, upstream).await;
           break
