@@ -1,4 +1,6 @@
 use std::env;
+use std::io::Cursor;
+use std::io::Read;
 use std::net::Ipv4Addr;
 use std::sync::{Arc, RwLock};
 
@@ -88,7 +90,13 @@ async fn main() -> io::Result<()> {
   let services: Api<Service> = Api::namespaced(client, &namespace);
   let service = services.get(&service).await.unwrap();
   dbg!(&service);
-  let cluster_ip = service.spec.as_ref().and_then(|s| s.cluster_ip.as_ref()).unwrap();
+  let load_balancer_ip = service.status.as_ref()
+    .and_then(|s| s.load_balancer.as_ref())
+    .and_then(|lb| lb.ingress.as_ref())
+    .and_then(|i| i.iter().find_map(|i| i.ip.as_ref()));
+  dbg!(&load_balancer_ip);
+  let cluster_ip = service.spec.as_ref().and_then(|s| s.cluster_ip.as_ref());
+  let upstream_ip = load_balancer_ip.or(cluster_ip).unwrap();
   let ports = service.spec.as_ref().and_then(|s| s.ports.as_ref());
   dbg!(&cluster_ip);
   dbg!(&ports);
@@ -139,16 +147,146 @@ async fn main() -> io::Result<()> {
       *last_update = Instant::now();
     }
 
-    if scaler.replicas().await.map(|r| r == 0).unwrap_or(false) {
-      eprintln!("Received request, scaling up.");
-      let _ = scaler.scale_to(1).await;
-    }
+    let minecraft = true;
 
-    eprintln!("Connecting to upstream server {}:{} …", cluster_ip, port);
+
+    let available_replicas = scaler.deployments().await.unwrap().get(&scaler.name).await.unwrap().status
+      .and_then(|s| s.available_replicas).unwrap_or(0);
+    dbg!(available_replicas);
+
+
+    let downstream = if minecraft && available_replicas == 0 {
+      let mut downstream_std = downstream.into_std()?;
+      downstream_std.set_nonblocking(false)?;
+
+      let mut proxy_state = "idle";
+
+
+      let mut state = 0;
+      let mut protocol_version = 0;
+
+      use minecraft_protocol::Decoder;
+      use minecraft_protocol::Encoder;
+      use minecraft_protocol::packet::Packet;
+      use minecraft_protocol::chat::{Message, Payload};
+
+      while let Ok(mut packet) = Packet::decode(&mut downstream_std) {
+        dbg!(&state);
+
+        match state {
+          0 if packet.id == 0 => {
+            match minecraft_protocol::handshake::ServerBoundHandshake::decode(&mut packet.data.as_slice()) {
+              Ok(handshake) => {
+                dbg!(&handshake);
+
+                state = handshake.next_state;
+                protocol_version = handshake.protocol_version;
+              },
+              _ => break,
+            }
+          },
+          1 => {
+            use minecraft_protocol::status::*;
+
+            match StatusServerBoundPacket::decode(packet.id as u8, &mut packet.data.as_slice()) {
+              Ok(StatusServerBoundPacket::StatusRequest) => {
+                let version = ServerVersion {
+                    name: String::from("unknown"),
+                    protocol: protocol_version as u32,
+                };
+
+                let players = OnlinePlayers {
+                    online: 0,
+                    max: 0,
+                    sample: vec![],
+                };
+
+                let server_status = ServerStatus {
+                    version,
+                    description: Message::new(Payload::text(&format!("Markuscraft ({})", proxy_state))),
+                    players,
+                };
+
+                let status_response = StatusResponse { server_status };
+                dbg!(&status_response);
+
+                let mut data = Vec::new();
+                status_response.encode(&mut data).unwrap();
+
+                let response = Packet {
+                  id: packet.id,
+                  data,
+                };
+
+                response.encode(&mut downstream_std);
+                break
+              },
+              Ok(StatusServerBoundPacket::PingRequest(..)) => {
+                use std::time::{SystemTime, UNIX_EPOCH};
+
+                let time = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis();
+                let mut data = Vec::new();
+                PingResponse { time: time as u64 }.encode(&mut data).unwrap();
+
+                let response = Packet {
+                  id: packet.id,
+                  data,
+                };
+
+                response.encode(&mut downstream_std);
+                break
+              }
+              _ => break,
+            }
+         },
+          2 => {
+            use minecraft_protocol::login::*;
+
+            match LoginServerBoundPacket::decode(packet.id as u8, &mut packet.data.as_slice()) {
+              Ok(LoginServerBoundPacket::LoginStart(login_request)) => {
+                dbg!(login_request);
+
+                let scaling = scaler.scale_to(1);
+
+                packet.data.clear();
+                LoginDisconnect {
+                  reason: Message::new(Payload::text("Server is starting, hang on…")),
+                }.encode(&mut packet.data);
+
+                packet.encode(&mut downstream_std);
+
+
+                scaling.await;
+
+                break
+              },
+              _ => break,
+            }
+          },
+          _ => break,
+        }
+      }
+
+      return Ok(());
+
+      downstream_std.set_nonblocking(true)?;
+      TcpStream::from_std(downstream_std)?
+    } else {
+      if scaler.replicas().await.map(|r| r == 0).unwrap_or(false) {
+        eprintln!("Received request, scaling up.");
+        let _ = scaler.scale_to(1).await;
+      }
+
+      downstream
+    };
+
+    eprintln!("Connecting to upstream server {}:{} …", upstream_ip, port);
     loop {
-      match TcpStream::connect((cluster_ip.as_str(), port)).await {
+      match TcpStream::connect((upstream_ip.as_str(), port)).await {
         Ok(upstream) => {
-          let _ = proxy(downstream, upstream).await;
+          if let Err(err) = proxy(downstream, upstream).await {
+            eprintln!("Proxy error: {}", err);
+          }
           break
         },
         Err(err) => {
