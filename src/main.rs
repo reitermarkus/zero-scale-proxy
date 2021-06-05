@@ -149,18 +149,21 @@ async fn main() -> io::Result<()> {
 
     let minecraft = true;
 
-
-    let available_replicas = scaler.deployments().await.unwrap().get(&scaler.name).await.unwrap().status
-      .and_then(|s| s.available_replicas).unwrap_or(0);
-    dbg!(available_replicas);
-
+    let deployments = scaler.deployments().await;
+    let deployment = if let Ok(deployments) = deployments {
+      deployments.get(&scaler.name).await.ok()
+    } else {
+      None
+    };
+    let deployment_status = deployment.and_then(|d| d.status);
+    let replicas = deployment_status.as_ref().and_then(|s| s.replicas).unwrap_or(0);
+    let ready_replicas = deployment_status.as_ref().and_then(|s| s.ready_replicas).unwrap_or(0);
+    let available_replicas = deployment_status.as_ref().and_then(|s| s.available_replicas).unwrap_or(0);
+    eprintln!("Replica status: {}/{} ready, {}/{} available", ready_replicas, replicas, available_replicas, replicas);
 
     let downstream = if minecraft && available_replicas == 0 {
       let mut downstream_std = downstream.into_std()?;
       downstream_std.set_nonblocking(false)?;
-
-      let mut proxy_state = "idle";
-
 
       let mut state = 0;
       let mut protocol_version = 0;
@@ -201,9 +204,15 @@ async fn main() -> io::Result<()> {
                     sample: vec![],
                 };
 
+                let message = if replicas == 1 {
+                  "Server is starting."
+                } else {
+                  "Server is currently idle."
+                };
+
                 let server_status = ServerStatus {
                     version,
-                    description: Message::new(Payload::text(&format!("Markuscraft ({})", proxy_state))),
+                    description: Message::new(Payload::text(message)),
                     players,
                 };
 
