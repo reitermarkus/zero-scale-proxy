@@ -18,5 +18,6 @@ COPY . .
 RUN cargo build --release --bin zero-scale-proxy
 
 FROM alpine as runner
+RUN apk add --no-cache libressl
 COPY --from=builder /app/target/release/zero-scale-proxy /usr/local/bin/
 CMD ["zero-scale-proxy"]
