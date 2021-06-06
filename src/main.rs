@@ -118,7 +118,7 @@ async fn main() -> io::Result<()> {
 
   let active_connections = Arc::new(RwLock::new((0, Instant::now())));
 
-  let scale_down_timeout = || async {
+  let timeout_checker = async {
     let active_connections = Arc::clone(&active_connections);
 
     loop {
@@ -129,7 +129,10 @@ async fn main() -> io::Result<()> {
       if deadline < Instant::now() {
         if connection_count == 0 && scaler.replicas().await.map(|r| r > 0).unwrap_or(false) {
           eprintln!("Reached idle timeout. Scaling down.");
-          let _ = scaler.scale_to(0).await;
+
+          if let Err(err) = scaler.scale_to(0).await {
+            eprintln!("Error scaling down: {}", err);
+          }
         }
 
         timer = sleep(timeout);
@@ -138,8 +141,6 @@ async fn main() -> io::Result<()> {
       timer.await;
     }
   };
-
-  let timeout_checker = scale_down_timeout();
 
   let proxy_server = listener_stream.try_for_each_concurrent(None, |downstream| async {
     let active_connections = Arc::clone(&active_connections);
@@ -254,7 +255,7 @@ async fn main() -> io::Result<()> {
          },
           2 => {
             match LoginServerBoundPacket::decode(packet.id as u8, &mut packet.data.as_slice()) {
-              Ok(LoginServerBoundPacket::LoginStart(login_request)) => {
+              Ok(LoginServerBoundPacket::LoginStart(_)) => {
                 let scaling = scaler.scale_to(1);
 
                 packet.data.clear();
