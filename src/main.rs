@@ -86,6 +86,9 @@ async fn main() -> io::Result<()> {
   let service: String = env::var("SERVICE").expect("SERVICE is not set");
   let deployment: String = env::var("DEPLOYMENT").expect("DEPLOYMENT is not set");
   let namespace: String = env::var("NAMESPACE").expect("NAMESPACE is not set");
+  let timeout: Duration = Duration::from_secs(
+    env::var("TIMEOUT").map(|t| t.parse::<u64>().expect("TIMEOUT is not a number")).unwrap_or(60)
+  );
 
   let client = Client::try_default().await.unwrap();
   let services: Api<Service> = Api::namespaced(client, &namespace);
@@ -113,7 +116,6 @@ async fn main() -> io::Result<()> {
   eprintln!("Listener: {:?}", listener);
   let listener_stream = TcpListenerStream::new(listener);
 
-  let timeout = Duration::from_secs(30);
   let active_connections = Arc::new(RwLock::new((0, Instant::now())));
 
   let scale_down_timeout = || async {
