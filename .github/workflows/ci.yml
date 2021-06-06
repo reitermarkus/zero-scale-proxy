@@ -24,9 +24,9 @@ jobs:
         run: |
           docker buildx create --name mybuilder
           docker buildx use mybuilder
-          docker pull "${cache_image}" || true
-          docker buildx build --platform linux/arm64 --cache-from="${cache_image}" -t "${image}" .
-          docker buildx build --platform linux/amd64 --cache-from="${cache_image}" --load -t "${image}" .
+          docker buildx build --platform linux/amd64,linux/arm64 \
+            --cache-from "type=registry,ref=${cache_image}" \
+            --tag "${image}" .
       # - name: Run Docker image
       #   run: |
       #     docker run \
@@ -38,5 +38,8 @@ jobs:
         run: echo '${{ secrets.DOCKER_TOKEN }}' | docker login -u '${{ github.actor }}' --password-stdin
       - name: Build and push Docker image
         run: |
-          docker buildx build --platform linux/amd64,linux/arm64 --cache-from="${cache_image}" --push -t "${image}" .
-          docker buildx build --platform linux/amd64,linux/arm64 --cache-from="${cache_image}" --push --target cacher -t "${cache_image}" .
+          docker buildx build --platform linux/amd64,linux/arm64 \
+            --cache-from "type=registry,ref=${cache_image}" \
+            --cache-to "type=registry,ref=${cache_image},mode=max" \
+            --tag "${image}" . \
+            --push
