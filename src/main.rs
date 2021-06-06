@@ -4,6 +4,7 @@ use std::io::Read;
 use std::net::Ipv4Addr;
 use std::sync::{Arc, RwLock};
 
+use defer::defer;
 use kube::{Api, api::{ListParams, Patch, PatchParams, WatchEvent}, Client};
 use k8s_openapi::api::autoscaling::v1::Scale;
 use k8s_openapi::api::autoscaling::v1::ScaleSpec;
@@ -146,6 +147,11 @@ async fn main() -> io::Result<()> {
       *connection_count += 1;
       *last_update = Instant::now();
     }
+    let _decrease_connection_count = defer(|| {
+      let (ref mut connection_count, ref mut last_update) = *active_connections.write().unwrap();
+      *connection_count -= 1;
+      *last_update = Instant::now();
+    });
 
     let minecraft = true;
 
@@ -160,28 +166,27 @@ async fn main() -> io::Result<()> {
     let ready_replicas = deployment_status.as_ref().and_then(|s| s.ready_replicas).unwrap_or(0);
     let available_replicas = deployment_status.as_ref().and_then(|s| s.available_replicas).unwrap_or(0);
     eprintln!("Replica status: {}/{} ready, {}/{} available", ready_replicas, replicas, available_replicas, replicas);
+    let (connection_count, _) = *active_connections.read().unwrap();
+    eprintln!("Connection count: {}", connection_count);
 
     let downstream = if minecraft && available_replicas == 0 {
       let mut downstream_std = downstream.into_std()?;
       downstream_std.set_nonblocking(false)?;
 
-      let mut state = 0;
-      let mut protocol_version = 0;
-
       use minecraft_protocol::Decoder;
       use minecraft_protocol::Encoder;
       use minecraft_protocol::packet::Packet;
       use minecraft_protocol::chat::{Message, Payload};
+      use minecraft_protocol::status::*;
+      use minecraft_protocol::login::*;
 
+      let mut state = 0;
+      let mut protocol_version = 0;
       while let Ok(mut packet) = Packet::decode(&mut downstream_std) {
-        dbg!(&state);
-
         match state {
           0 if packet.id == 0 => {
             match minecraft_protocol::handshake::ServerBoundHandshake::decode(&mut packet.data.as_slice()) {
               Ok(handshake) => {
-                dbg!(&handshake);
-
                 state = handshake.next_state;
                 protocol_version = handshake.protocol_version;
               },
@@ -189,8 +194,6 @@ async fn main() -> io::Result<()> {
             }
           },
           1 => {
-            use minecraft_protocol::status::*;
-
             match StatusServerBoundPacket::decode(packet.id as u8, &mut packet.data.as_slice()) {
               Ok(StatusServerBoundPacket::StatusRequest) => {
                 let version = ServerVersion {
@@ -217,7 +220,6 @@ async fn main() -> io::Result<()> {
                 };
 
                 let status_response = StatusResponse { server_status };
-                dbg!(&status_response);
 
                 let mut data = Vec::new();
                 status_response.encode(&mut data).unwrap();
@@ -249,12 +251,8 @@ async fn main() -> io::Result<()> {
             }
          },
           2 => {
-            use minecraft_protocol::login::*;
-
             match LoginServerBoundPacket::decode(packet.id as u8, &mut packet.data.as_slice()) {
               Ok(LoginServerBoundPacket::LoginStart(login_request)) => {
-                dbg!(login_request);
-
                 let scaling = scaler.scale_to(1);
 
                 packet.data.clear();
@@ -264,8 +262,9 @@ async fn main() -> io::Result<()> {
 
                 packet.encode(&mut downstream_std);
 
-
-                scaling.await;
+                if let Err(err) = scaling.await {
+                  eprintln!("Scaling failed: {}", err);
+                }
 
                 break
               },
@@ -304,12 +303,6 @@ async fn main() -> io::Result<()> {
           continue
         },
       }
-    }
-
-    {
-      let (ref mut connection_count, ref mut last_update) = *active_connections.write().unwrap();
-      *connection_count -= 1;
-      *last_update = Instant::now();
     }
 
     Ok(())

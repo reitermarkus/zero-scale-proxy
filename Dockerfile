@@ -1,6 +1,7 @@
-FROM rust:alpine as base
+FROM rust:slim-buster as base
 WORKDIR /app
-RUN apk add --no-cache musl-dev libressl-dev
+RUN apt-get update \
+ && apt-get install -y pkg-config libssl-dev
 RUN cargo install cargo-chef
 
 FROM base as planner
@@ -17,7 +18,9 @@ COPY --from=cacher /usr/local/cargo /usr/local/cargo
 COPY . .
 RUN cargo build --release --bin zero-scale-proxy
 
-FROM alpine as runner
-RUN apk add --no-cache libressl
-COPY --from=builder /app/target/release/zero-scale-proxy /usr/local/bin/
+FROM debian:buster-slim as runner
+RUN apt-get update \
+ && apt-get install -y openssl \
+ && rm -rf /var/lib/apt/lists/*
+COPY --from=builder /app/target/release/zero-scale-proxy /usr/local/bin/zero-scale-proxy
 CMD ["zero-scale-proxy"]
