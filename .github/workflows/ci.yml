@@ -24,6 +24,7 @@ jobs:
         run: |
           docker buildx create --name mybuilder
           docker buildx use mybuilder
+          docker pull "${cache_image}" || true
           docker buildx build --platform linux/arm64 --cache-from="${cache_image}" -t "${image}" .
           docker buildx build --platform linux/amd64 --cache-from="${cache_image}" --load -t "${image}" .
       # - name: Run Docker image
