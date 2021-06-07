@@ -39,6 +39,7 @@ async fn main() -> anyhow::Result<()> {
     env::var("TIMEOUT").map(|t| t.parse::<u64>().expect("TIMEOUT is not a number")).unwrap_or(60)
   );
   let minecraft: bool = env::var("MINECRAFT").map(|s| s.parse::<bool>().expect("MINECRAFT is not a boolean")).unwrap_or(false);
+  let minecraft_favicon = env::var("MINECRAFT_FAVICON").ok();
 
   let client = Client::try_default().await?;
   let services: Api<Service> = Api::namespaced(client, &namespace);
@@ -138,7 +139,7 @@ async fn main() -> anyhow::Result<()> {
     };
 
     let (downstream, mut upstream) = if minecraft {
-      match minecraft::middleware(downstream, upstream, replicas, &scaler).await {
+      match minecraft::middleware(downstream, upstream, replicas, &scaler, minecraft_favicon.as_deref()).await {
         Ok(Some((downstream, upstream))) => (downstream, upstream),
         Ok(None) => return Ok(()),
         Err(err) => {

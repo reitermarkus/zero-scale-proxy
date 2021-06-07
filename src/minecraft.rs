@@ -1,5 +1,4 @@
 use std::time::{SystemTime, UNIX_EPOCH};
-use std::env;
 
 use crate::ZeroScaler;
 
@@ -27,7 +26,7 @@ fn proxy_packet(source: &mut std::net::TcpStream, destination: &mut std::net::Tc
   return Ok(packet);
 }
 
-fn status_response(state: &str, message: &str) -> Packet {
+fn status_response(state: &str, message: &str, favicon: Option<&str>) -> Packet {
   let version = ServerVersion {
     name: String::from(state),
     protocol: 0,
@@ -39,8 +38,7 @@ fn status_response(state: &str, message: &str) -> Packet {
     sample: vec![],
   };
 
-  let favicon = env::var("MINECRAFT_FAVICON").ok()
-    .map(|data| format!("data:image/png;base64,{}", data));
+  let favicon = favicon.map(|data| format!("data:image/png;base64,{}", data));
 
   let server_status = ServerStatus {
     version,
@@ -88,7 +86,7 @@ fn login_response() -> Packet {
   }
 }
 
-pub async fn middleware(downstream: TcpStream, upstream: Option<TcpStream>, replicas: i32, scaler: &ZeroScaler) -> anyhow::Result<Option<(TcpStream, Option<TcpStream>)>> {
+pub async fn middleware(downstream: TcpStream, upstream: Option<TcpStream>, replicas: i32, scaler: &ZeroScaler, favicon: Option<&str>) -> anyhow::Result<Option<(TcpStream, Option<TcpStream>)>> {
   let mut downstream_std = downstream.into_std()?;
   downstream_std.set_nonblocking(false)?;
 
@@ -119,9 +117,9 @@ pub async fn middleware(downstream: TcpStream, upstream: Option<TcpStream>, repl
             break
           } else {
             let response = if replicas > 0 {
-              status_response("starting", "Server is starting.")
+              status_response("starting", "Server is starting.", favicon)
             } else {
-              status_response("idle", "Server is currently idle.")
+              status_response("idle", "Server is currently idle.", favicon)
             };
 
             response
