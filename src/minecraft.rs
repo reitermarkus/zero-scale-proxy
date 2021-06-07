@@ -21,6 +21,7 @@ use minecraft_protocol::status::ServerStatus;
 use tokio::net::TcpStream;
 
 fn proxy_packet(source: &mut std::net::TcpStream, destination: &mut std::net::TcpStream) -> anyhow::Result<Packet> {
+  log::trace!("proxy_packet");
   let packet = Packet::decode(source).map_err(|e| anyhow!("{:?}", e))?;
   packet.encode(destination).map_err(|e| anyhow!("{:?}", e))?;
   return Ok(packet);
@@ -98,6 +99,7 @@ pub async fn middleware(downstream: TcpStream, upstream: Option<TcpStream>, repl
     None
   };
 
+  log::trace!("middleware loop");
   let mut state = 0;
   loop {
     let packet = if let Some(ref mut upstream_std) = upstream_std {
@@ -143,6 +145,8 @@ pub async fn middleware(downstream: TcpStream, upstream: Option<TcpStream>, repl
       },
       2 => match LoginServerBoundPacket::decode(packet.id as u8, &mut packet.data.as_slice()).map_err(|e| anyhow!("{:?}", e))? {
         LoginServerBoundPacket::LoginStart(_) => {
+          log::trace!("login");
+
           if upstream_std.is_none() {
             log::info!("Received login request, scaling up.");
             let scaling = scaler.scale_to(1);
