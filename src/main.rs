@@ -1,5 +1,4 @@
 use std::env;
-use std::io::Cursor;
 use std::net::Ipv4Addr;
 use std::sync::{Arc, RwLock};
 
@@ -19,7 +18,7 @@ use futures::prelude::*;
 
 async fn proxy(mut downstream: TcpStream, mut upstream: TcpStream) -> io::Result<()> {
   let (bytes_sent, bytes_received) = io::copy_bidirectional(&mut downstream, &mut upstream).await?;
-  eprintln!("Sent {}, received {} bytes.", bytes_sent, bytes_received);
+  log::info!("Sent {}, received {} bytes.", bytes_sent, bytes_received);
   Ok(())
 }
 
@@ -82,6 +81,8 @@ impl ZeroScaler {
 
 #[tokio::main]
 async fn main() -> io::Result<()> {
+  env_logger::init();
+
   let service: String = env::var("SERVICE").expect("SERVICE is not set");
   let deployment: String = env::var("DEPLOYMENT").expect("DEPLOYMENT is not set");
   let namespace: String = env::var("NAMESPACE").expect("NAMESPACE is not set");
@@ -92,17 +93,13 @@ async fn main() -> io::Result<()> {
   let client = Client::try_default().await.unwrap();
   let services: Api<Service> = Api::namespaced(client, &namespace);
   let service = services.get(&service).await.unwrap();
-  dbg!(&service);
   let load_balancer_ip = service.status.as_ref()
     .and_then(|s| s.load_balancer.as_ref())
     .and_then(|lb| lb.ingress.as_ref())
     .and_then(|i| i.iter().find_map(|i| i.ip.as_ref()));
-  dbg!(&load_balancer_ip);
   let cluster_ip = service.spec.as_ref().and_then(|s| s.cluster_ip.as_ref());
   let upstream_ip = load_balancer_ip.or(cluster_ip).unwrap();
   let ports = service.spec.as_ref().and_then(|s| s.ports.as_ref());
-  dbg!(&cluster_ip);
-  dbg!(&ports);
 
   let port = ports.unwrap().first().unwrap().port as u16;
 
@@ -112,7 +109,7 @@ async fn main() -> io::Result<()> {
   };
 
   let listener = TcpListener::bind((Ipv4Addr::new(0, 0, 0, 0), port)).await?;
-  eprintln!("Listener: {:?}", listener);
+  log::info!("Listening on {}.", listener.local_addr()?);
   let listener_stream = TcpListenerStream::new(listener);
 
   let active_connections = Arc::new(RwLock::new((0, Instant::now())));
@@ -123,17 +120,34 @@ async fn main() -> io::Result<()> {
     loop {
       let (connection_count, last_update) = *active_connections.read().unwrap();
 
+      log::debug!("Checking if idle timeout is reached.");
       let deadline = last_update + timeout;
       let mut timer = sleep_until(deadline);
       if deadline < Instant::now() {
-        if connection_count == 0 && scaler.replicas().await.map(|r| r > 0).unwrap_or(false) {
-          eprintln!("Reached idle timeout. Scaling down.");
+        log::debug!("Connection count: {}", connection_count);
 
-          if let Err(err) = scaler.scale_to(0).await {
-            eprintln!("Error scaling down: {}", err);
+        if connection_count == 0 {
+          log::debug!("Checking replica count.");
+          let replicas = match scaler.replicas().await {
+            Ok(replicas) => replicas,
+            Err(err) => {
+              log::error!("Failed getting replica count: {}", err);
+              continue
+            }
+          };
+          log::debug!("Replicas: {}", replicas);
+
+          if replicas > 1 {
+            log::info!("Reached idle timeout. Scaling down.");
+
+            if let Err(err) = scaler.scale_to(0).await {
+              log::error!("Error scaling down: {}", err);
+              continue
+            }
           }
         }
 
+        log::debug!("Idle timeout not yet reached. Next check in {} seconds.", timeout.as_secs());
         timer = sleep(timeout);
       }
 
@@ -147,11 +161,13 @@ async fn main() -> io::Result<()> {
     {
       let (ref mut connection_count, ref mut last_update) = *active_connections.write().unwrap();
       *connection_count += 1;
+      log::info!("Connection count: {}", connection_count);
       *last_update = Instant::now();
     }
     let _decrease_connection_count = defer(|| {
       let (ref mut connection_count, ref mut last_update) = *active_connections.write().unwrap();
       *connection_count -= 1;
+      log::info!("Connection count: {}", connection_count);
       *last_update = Instant::now();
     });
 
@@ -167,9 +183,7 @@ async fn main() -> io::Result<()> {
     let replicas = deployment_status.as_ref().and_then(|s| s.replicas).unwrap_or(0);
     let ready_replicas = deployment_status.as_ref().and_then(|s| s.ready_replicas).unwrap_or(0);
     let available_replicas = deployment_status.as_ref().and_then(|s| s.available_replicas).unwrap_or(0);
-    eprintln!("Replica status: {}/{} ready, {}/{} available", ready_replicas, replicas, available_replicas, replicas);
-    let (connection_count, _) = *active_connections.read().unwrap();
-    eprintln!("Connection count: {}", connection_count);
+    log::info!("Replica status: {}/{} ready, {}/{} available", ready_replicas, replicas, available_replicas, replicas);
 
     let downstream = if minecraft && available_replicas == 0 {
       let mut downstream_std = downstream.into_std()?;
@@ -265,7 +279,7 @@ async fn main() -> io::Result<()> {
                 packet.encode(&mut downstream_std);
 
                 if let Err(err) = scaling.await {
-                  eprintln!("Scaling failed: {}", err);
+                  log::error!("Scaling failed: {}", err);
                 }
 
                 break
@@ -283,25 +297,25 @@ async fn main() -> io::Result<()> {
       TcpStream::from_std(downstream_std)?
     } else {
       if scaler.replicas().await.map(|r| r == 0).unwrap_or(false) {
-        eprintln!("Received request, scaling up.");
+        log::info!("Received request, scaling up.");
         let _ = scaler.scale_to(1).await;
       }
 
       downstream
     };
 
-    eprintln!("Connecting to upstream server {}:{} …", upstream_ip, port);
+    log::info!("Connecting to upstream server {}:{} …", upstream_ip, port);
     loop {
       match TcpStream::connect((upstream_ip.as_str(), port)).await {
         Ok(upstream) => {
           if let Err(err) = proxy(downstream, upstream).await {
-            eprintln!("Proxy error: {}", err);
+            log::error!("Proxy error: {}", err);
           }
           break
         },
         Err(err) => {
-          eprintln!("Error connecting to upstream server: {}", err);
-          eprintln!("Retrying…");
+          log::error!("Error connecting to upstream server: {}", err);
+          log::error!("Retrying…");
           continue
         },
       }
