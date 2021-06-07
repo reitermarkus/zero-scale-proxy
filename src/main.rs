@@ -269,6 +269,7 @@ async fn main() -> io::Result<()> {
           2 => {
             match LoginServerBoundPacket::decode(packet.id as u8, &mut packet.data.as_slice()) {
               Ok(LoginServerBoundPacket::LoginStart(_)) => {
+                log::info!("Received login request, scaling up.");
                 let scaling = scaler.scale_to(1);
 
                 packet.data.clear();
