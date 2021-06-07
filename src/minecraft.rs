@@ -1,4 +1,5 @@
 use std::time::{SystemTime, UNIX_EPOCH};
+use std::env;
 
 use crate::ZeroScaler;
 
@@ -26,28 +27,26 @@ fn proxy_packet(source: &mut std::net::TcpStream, destination: &mut std::net::Tc
   return Ok(packet);
 }
 
-fn status_response(replicas: i32) -> Packet {
+fn status_response(state: &str, message: &str) -> Packet {
   let version = ServerVersion {
-      name: String::from("idle"),
-      protocol: 0,
+    name: String::from(state),
+    protocol: 0,
   };
 
   let players = OnlinePlayers {
-      online: 0,
-      max: 0,
-      sample: vec![],
+    online: 0,
+    max: 0,
+    sample: vec![],
   };
 
-  let message = if replicas > 0 {
-    "Server is starting."
-  } else {
-    "Server is currently idle."
-  };
+  let favicon = env::var("MINECRAFT_FAVICON").ok()
+    .map(|data| format!("data:image/png;base64,{}", data));
 
   let server_status = ServerStatus {
-      version,
-      description: Message::new(Payload::text(message)),
-      players,
+    version,
+    description: Message::new(Payload::text(message)),
+    players,
+    favicon,
   };
 
   let status_response = StatusResponse { server_status };
@@ -119,7 +118,13 @@ pub async fn middleware(downstream: TcpStream, upstream: Option<TcpStream>, repl
           if upstream_std.is_some() {
             break
           } else {
-            status_response(replicas)
+            let response = if replicas > 0 {
+              status_response("starting", "Server is starting.")
+            } else {
+              status_response("idle", "Server is currently idle.")
+            };
+
+            response
               .encode(&mut downstream_std)
               .map_err(|e| anyhow!("{:?}", e))?;
             return Ok(None)
