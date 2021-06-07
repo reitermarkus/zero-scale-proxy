@@ -108,11 +108,15 @@ pub async fn middleware(downstream: TcpStream, upstream: Option<TcpStream>, repl
 
     match state {
       0 => {
+        log::trace!("handshake");
+
         let handshake = ServerBoundHandshake::decode(&mut packet.data.as_slice()).map_err(|e| anyhow!("{:?}", e))?;
         state = handshake.next_state;
       },
       1 => match StatusServerBoundPacket::decode(packet.id as u8, &mut packet.data.as_slice()).map_err(|e| anyhow!("{:?}", e))? {
         StatusServerBoundPacket::StatusRequest => {
+          log::trace!("status");
+
           if upstream_std.is_some() {
             break
           } else {
@@ -129,6 +133,8 @@ pub async fn middleware(downstream: TcpStream, upstream: Option<TcpStream>, repl
           }
         },
         StatusServerBoundPacket::PingRequest(..) => {
+          log::trace!("ping");
+
           ping_response()
             .encode(&mut downstream_std)
             .map_err(|e| anyhow!("{:?}", e))?;
