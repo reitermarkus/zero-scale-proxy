@@ -137,7 +137,7 @@ async fn main() -> io::Result<()> {
           };
           log::debug!("Replicas: {}", replicas);
 
-          if replicas > 1 {
+          if replicas >= 1 {
             log::info!("Reached idle timeout. Scaling down.");
 
             if let Err(err) = scaler.scale_to(0).await {
