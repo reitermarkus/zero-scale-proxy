@@ -3,18 +3,18 @@ use std::net::Ipv4Addr;
 use std::sync::{Arc, RwLock};
 
 use defer::defer;
-use kube::{Api, api::{ListParams, Patch, PatchParams, WatchEvent}, Client};
-use k8s_openapi::api::autoscaling::v1::Scale;
-use k8s_openapi::api::autoscaling::v1::ScaleSpec;
-use k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
-use k8s_openapi::api::apps::v1::Deployment;
+use futures::prelude::*;
+use kube::{Api, Client};
 use k8s_openapi::api::core::v1::Service;
 use tokio::io;
 use tokio::join;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::time::{sleep, sleep_until, Duration, Instant};
 use tokio_stream::wrappers::TcpListenerStream;
-use futures::prelude::*;
+
+mod minecraft;
+mod zero_scaler;
+pub(crate) use zero_scaler::ZeroScaler;
 
 async fn proxy(mut downstream: TcpStream, mut upstream: TcpStream) -> io::Result<()> {
   let (bytes_sent, bytes_received) = io::copy_bidirectional(&mut downstream, &mut upstream).await?;
@@ -22,65 +22,14 @@ async fn proxy(mut downstream: TcpStream, mut upstream: TcpStream) -> io::Result
   Ok(())
 }
 
-struct ZeroScaler {
-  name: String,
-  namespace: String,
-}
-
-impl ZeroScaler {
-  async fn deployments(&self) -> Result<Api<Deployment>, kube::Error> {
-    let client = Client::try_default().await?;
-    Ok(Api::namespaced(client, &self.namespace))
-  }
-
-  async fn scale(&self) -> Result<Scale, kube::Error> {
-    self.deployments().await?.get_scale(&self.name).await
-  }
-
-  async fn replicas(&self) -> Result<i32, kube::Error> {
-    let scale = self.scale().await?;
-    Ok(scale.spec.and_then(|spec| spec.replicas).unwrap_or(0))
-  }
-
-  async fn scale_to(&self, replicas: i32) -> Result<(), kube::Error> {
-    let patch_params = PatchParams {
-      // dry_run: true,
-      force: true,
-      field_manager: Some("zero-scale-proxy".into()),
-      ..Default::default()
-    };
-    let patch = Scale {
-      metadata: ObjectMeta { name: Some(self.name.to_owned()), ..Default::default() },
-      spec: Some(ScaleSpec {
-        replicas: Some(replicas),
-        ..Default::default()
-      }),
-      ..Default::default()
-    };
-    self.deployments().await?.patch_scale(&self.name, &patch_params, &Patch::Apply(patch)).await?;
-
-    let lp = ListParams::default()
-      .fields(&format!("metadata.name={}", self.name));
-
-    let mut stream = self.deployments().await?.watch(&lp, "0").await?.boxed();
-
-    while let Some(status) = stream.try_next().await.unwrap() {
-      match status {
-        WatchEvent::Added(s) | WatchEvent::Modified(s) => {
-          if s.status.and_then(|s| s.available_replicas).unwrap_or(0) == replicas {
-            break
-          }
-        },
-        _ => {},
-      }
-    }
-
-    Ok(())
-  }
+async fn listener_stream(port: u16) -> anyhow::Result<TcpListenerStream> {
+  let listener = TcpListener::bind((Ipv4Addr::new(0, 0, 0, 0), port)).await?;
+  log::info!("Listening on {}.", listener.local_addr()?);
+  Ok(TcpListenerStream::new(listener))
 }
 
 #[tokio::main]
-async fn main() -> io::Result<()> {
+async fn main() -> anyhow::Result<()> {
   env_logger::init();
 
   let service: String = env::var("SERVICE").expect("SERVICE is not set");
@@ -89,6 +38,7 @@ async fn main() -> io::Result<()> {
   let timeout: Duration = Duration::from_secs(
     env::var("TIMEOUT").map(|t| t.parse::<u64>().expect("TIMEOUT is not a number")).unwrap_or(60)
   );
+  let minecraft: bool = env::var("MINECRAFT").map(|s| s.parse::<bool>().expect("MINECRAFT is not a boolean")).unwrap_or(false);
 
   let client = Client::try_default().await.unwrap();
   let services: Api<Service> = Api::namespaced(client, &namespace);
@@ -108,13 +58,11 @@ async fn main() -> io::Result<()> {
     namespace: namespace.into(),
   };
 
-  let listener = TcpListener::bind((Ipv4Addr::new(0, 0, 0, 0), port)).await?;
-  log::info!("Listening on {}.", listener.local_addr()?);
-  let listener_stream = TcpListenerStream::new(listener);
+  let listener_stream = listener_stream(port).await?;
 
   let active_connections = Arc::new(RwLock::new((0, Instant::now())));
 
-  let timeout_checker = async {
+  let idle_checker = async {
     let active_connections = Arc::clone(&active_connections);
 
     loop {
@@ -155,7 +103,7 @@ async fn main() -> io::Result<()> {
     }
   };
 
-  let proxy_server = listener_stream.try_for_each_concurrent(None, |downstream| async {
+  let proxy_server = listener_stream.err_into::<anyhow::Error>().try_for_each_concurrent(None, |downstream| async {
     let active_connections = Arc::clone(&active_connections);
 
     {
@@ -171,8 +119,6 @@ async fn main() -> io::Result<()> {
       *last_update = Instant::now();
     });
 
-    let minecraft = true;
-
     let deployments = scaler.deployments().await;
     let deployment = if let Ok(deployments) = deployments {
       deployments.get(&scaler.name).await.ok()
@@ -185,147 +131,52 @@ async fn main() -> io::Result<()> {
     let available_replicas = deployment_status.as_ref().and_then(|s| s.available_replicas).unwrap_or(0);
     log::info!("Replica status: {}/{} ready, {}/{} available", ready_replicas, replicas, available_replicas, replicas);
 
-    let downstream = if minecraft && available_replicas == 0 {
-      let mut downstream_std = downstream.into_std()?;
-      downstream_std.set_nonblocking(false)?;
+    let upstream = if available_replicas > 0 {
+      Some(TcpStream::connect((upstream_ip.as_str(), port)).await?)
+    } else {
+      None
+    };
 
-      use minecraft_protocol::Decoder;
-      use minecraft_protocol::Encoder;
-      use minecraft_protocol::packet::Packet;
-      use minecraft_protocol::chat::{Message, Payload};
-      use minecraft_protocol::status::*;
-      use minecraft_protocol::login::*;
-
-      let mut state = 0;
-      let mut protocol_version = 0;
-      while let Ok(mut packet) = Packet::decode(&mut downstream_std) {
-        match state {
-          0 if packet.id == 0 => {
-            match minecraft_protocol::handshake::ServerBoundHandshake::decode(&mut packet.data.as_slice()) {
-              Ok(handshake) => {
-                state = handshake.next_state;
-                protocol_version = handshake.protocol_version;
-              },
-              _ => break,
-            }
-          },
-          1 => {
-            match StatusServerBoundPacket::decode(packet.id as u8, &mut packet.data.as_slice()) {
-              Ok(StatusServerBoundPacket::StatusRequest) => {
-                let version = ServerVersion {
-                    name: String::from("unknown"),
-                    protocol: protocol_version as u32,
-                };
-
-                let players = OnlinePlayers {
-                    online: 0,
-                    max: 0,
-                    sample: vec![],
-                };
-
-                let message = if replicas == 1 {
-                  "Server is starting."
-                } else {
-                  "Server is currently idle."
-                };
-
-                let server_status = ServerStatus {
-                    version,
-                    description: Message::new(Payload::text(message)),
-                    players,
-                };
-
-                let status_response = StatusResponse { server_status };
-
-                let mut data = Vec::new();
-                status_response.encode(&mut data).unwrap();
-
-                let response = Packet {
-                  id: packet.id,
-                  data,
-                };
-
-                response.encode(&mut downstream_std);
-                break
-              },
-              Ok(StatusServerBoundPacket::PingRequest(..)) => {
-                use std::time::{SystemTime, UNIX_EPOCH};
-
-                let time = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis();
-                let mut data = Vec::new();
-                PingResponse { time: time as u64 }.encode(&mut data).unwrap();
-
-                let response = Packet {
-                  id: packet.id,
-                  data,
-                };
-
-                response.encode(&mut downstream_std);
-                break
-              }
-              _ => break,
-            }
-         },
-          2 => {
-            match LoginServerBoundPacket::decode(packet.id as u8, &mut packet.data.as_slice()) {
-              Ok(LoginServerBoundPacket::LoginStart(_)) => {
-                log::info!("Received login request, scaling up.");
-                let scaling = scaler.scale_to(1);
-
-                packet.data.clear();
-                LoginDisconnect {
-                  reason: Message::new(Payload::text("Server is starting, hang on…")),
-                }.encode(&mut packet.data);
-
-                packet.encode(&mut downstream_std);
-
-                if let Err(err) = scaling.await {
-                  log::error!("Scaling failed: {}", err);
-                }
-
-                break
-              },
-              _ => break,
-            }
-          },
-          _ => break,
+    let (downstream, mut upstream) = if minecraft {
+      match minecraft::middleware(downstream, upstream, replicas, &scaler).await {
+        Ok(Some((downstream, upstream))) => (downstream, upstream),
+        Ok(None) => return Ok(()),
+        Err(err) => {
+          log::error!("Error in Minecraft middleware: {}", err);
+          return Ok(())
         }
       }
-
-      return Ok(());
-
-      downstream_std.set_nonblocking(true)?;
-      TcpStream::from_std(downstream_std)?
     } else {
       if scaler.replicas().await.map(|r| r == 0).unwrap_or(false) {
         log::info!("Received request, scaling up.");
         let _ = scaler.scale_to(1).await;
       }
 
-      downstream
+      (downstream, None)
     };
 
     log::info!("Connecting to upstream server {}:{} …", upstream_ip, port);
-    loop {
-      match TcpStream::connect((upstream_ip.as_str(), port)).await {
-        Ok(upstream) => {
-          if let Err(err) = proxy(downstream, upstream).await {
-            log::error!("Proxy error: {}", err);
-          }
-          break
-        },
-        Err(err) => {
-          log::error!("Error connecting to upstream server: {}", err);
-          log::error!("Retrying…");
-          continue
-        },
-      }
+    let upstream = if let Some(upstream) = upstream.take() {
+      Ok(upstream)
+    } else {
+      TcpStream::connect((upstream_ip.as_str(), port)).await
+    };
+
+    match upstream {
+      Ok(upstream) => {
+        if let Err(err) = proxy(downstream, upstream).await {
+          log::error!("Proxy error: {}", err);
+        }
+      },
+      Err(err) => {
+        log::error!("Error connecting to upstream server: {}", err);
+      },
     }
 
     Ok(())
   });
 
-  let (_, proxy_result) = join!(timeout_checker, proxy_server);
+  let (_, proxy_result) = join!(idle_checker, proxy_server);
   proxy_result?;
 
   Ok(())

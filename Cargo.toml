@@ -15,6 +15,7 @@ tokio = { version = "1.3.0", features = ["io-std", "io-util", "macros", "net", "
 tokio-stream = { version = "0.1.6", features = ["net"] }
 log = "0.4.14"
 env_logger = "0.8.3"
+anyhow = "1.0.40"
 
 # [patch.crates-io]
 # minecraft-protocol = { path = "./minecraft-protocol/protocol" }
