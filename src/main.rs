@@ -40,18 +40,18 @@ async fn main() -> anyhow::Result<()> {
   );
   let minecraft: bool = env::var("MINECRAFT").map(|s| s.parse::<bool>().expect("MINECRAFT is not a boolean")).unwrap_or(false);
 
-  let client = Client::try_default().await.unwrap();
+  let client = Client::try_default().await?;
   let services: Api<Service> = Api::namespaced(client, &namespace);
-  let service = services.get(&service).await.unwrap();
+  let service = services.get(&service).await?;
   let load_balancer_ip = service.status.as_ref()
     .and_then(|s| s.load_balancer.as_ref())
     .and_then(|lb| lb.ingress.as_ref())
     .and_then(|i| i.iter().find_map(|i| i.ip.as_ref()));
   let cluster_ip = service.spec.as_ref().and_then(|s| s.cluster_ip.as_ref());
-  let upstream_ip = load_balancer_ip.or(cluster_ip).unwrap();
+  let upstream_ip = load_balancer_ip.or(cluster_ip).expect("Failed to get service IP");
   let ports = service.spec.as_ref().and_then(|s| s.ports.as_ref());
 
-  let port = ports.unwrap().first().unwrap().port as u16;
+  let port = ports.and_then(|p| p.first()).expect("Failed to get service port").port as u16;
 
   let scaler = ZeroScaler {
     name: deployment.into(),
