@@ -114,15 +114,19 @@ async fn main() -> anyhow::Result<()> {
     let proxy = || async {
       let active_connections = Arc::clone(&active_connections);
 
+      let peer_addr = downstream.peer_addr()?;
+
       {
         let (ref mut connection_count, ref mut last_update) = *active_connections.write().unwrap();
         *connection_count += 1;
+        log::info!("New connection: {}", peer_addr);
         log::info!("Connection count: {}", connection_count);
         *last_update = Instant::now();
       }
       let _decrease_connection_count = defer(|| {
         let (ref mut connection_count, ref mut last_update) = *active_connections.write().unwrap();
         *connection_count -= 1;
+        log::info!("Connection ended: {}", peer_addr);
         log::info!("Connection count: {}", connection_count);
         *last_update = Instant::now();
       });
