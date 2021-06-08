@@ -2,6 +2,7 @@ use std::env;
 use std::net::Ipv4Addr;
 use std::sync::{Arc, RwLock};
 
+use anyhow::Context;
 use defer::defer;
 use futures::prelude::*;
 use kube::{Api, Client};
@@ -105,74 +106,72 @@ async fn main() -> anyhow::Result<()> {
   };
 
   let proxy_server = listener_stream.err_into::<anyhow::Error>().try_for_each_concurrent(None, |downstream| async {
-    let active_connections = Arc::clone(&active_connections);
-
-    {
-      let (ref mut connection_count, ref mut last_update) = *active_connections.write().unwrap();
-      *connection_count += 1;
-      log::info!("Connection count: {}", connection_count);
-      *last_update = Instant::now();
-    }
-    let _decrease_connection_count = defer(|| {
-      let (ref mut connection_count, ref mut last_update) = *active_connections.write().unwrap();
-      *connection_count -= 1;
-      log::info!("Connection count: {}", connection_count);
-      *last_update = Instant::now();
-    });
-
-    let deployments = scaler.deployments().await;
-    let deployment = if let Ok(deployments) = deployments {
-      deployments.get(&scaler.name).await.ok()
-    } else {
-      None
-    };
-    let deployment_status = deployment.and_then(|d| d.status);
-    let replicas = deployment_status.as_ref().and_then(|s| s.replicas).unwrap_or(0);
-    let ready_replicas = deployment_status.as_ref().and_then(|s| s.ready_replicas).unwrap_or(0);
-    let available_replicas = deployment_status.as_ref().and_then(|s| s.available_replicas).unwrap_or(0);
-    log::info!("Replica status: {}/{} ready, {}/{} available", ready_replicas, replicas, available_replicas, replicas);
-
-    let upstream = if available_replicas > 0 {
+    let connect_to_upstream_server = || async {
       log::info!("Connecting to upstream server {}:{}.", upstream_ip, port);
-      Some(TcpStream::connect((upstream_ip.as_str(), port)).await?)
-    } else {
-      None
+      TcpStream::connect((upstream_ip.as_str(), port)).await.context("Error connecting to upstream server")
     };
 
-    let (downstream, mut upstream) = if minecraft {
-      match minecraft::middleware(downstream, upstream, replicas, &scaler, minecraft_favicon.as_deref()).await {
-        Ok(Some((downstream, upstream))) => (downstream, upstream),
-        Ok(None) => return Ok(()),
-        Err(err) => {
-          log::error!("Error in Minecraft middleware: {}", err);
-          return Ok(())
-        }
+    let proxy = || async {
+      let active_connections = Arc::clone(&active_connections);
+
+      {
+        let (ref mut connection_count, ref mut last_update) = *active_connections.write().unwrap();
+        *connection_count += 1;
+        log::info!("Connection count: {}", connection_count);
+        *last_update = Instant::now();
       }
-    } else {
-      if scaler.replicas().await.map(|r| r == 0).unwrap_or(false) {
-        log::info!("Received request, scaling up.");
-        let _ = scaler.scale_to(1).await;
-      }
+      let _decrease_connection_count = defer(|| {
+        let (ref mut connection_count, ref mut last_update) = *active_connections.write().unwrap();
+        *connection_count -= 1;
+        log::info!("Connection count: {}", connection_count);
+        *last_update = Instant::now();
+      });
 
-      (downstream, upstream)
-    };
+      let deployments = scaler.deployments().await;
+      let deployment = if let Ok(deployments) = deployments {
+        deployments.get(&scaler.name).await.ok()
+      } else {
+        None
+      };
+      let deployment_status = deployment.and_then(|d| d.status);
+      let replicas = deployment_status.as_ref().and_then(|s| s.replicas).unwrap_or(0);
+      let ready_replicas = deployment_status.as_ref().and_then(|s| s.ready_replicas).unwrap_or(0);
+      let available_replicas = deployment_status.as_ref().and_then(|s| s.available_replicas).unwrap_or(0);
+      log::info!("Replica status: {}/{} ready, {}/{} available", ready_replicas, replicas, available_replicas, replicas);
 
-    let upstream = if let Some(upstream) = upstream.take() {
-      Ok(upstream)
-    } else {
-      log::info!("Connecting to upstream server {}:{}.", upstream_ip, port);
-      TcpStream::connect((upstream_ip.as_str(), port)).await
-    };
+      let upstream = if available_replicas > 0 {
+        Some(connect_to_upstream_server().await?)
+      } else {
+        None
+      };
 
-    match upstream {
-      Ok(upstream) => {
-        if let Err(err) = proxy(downstream, upstream).await {
-          log::error!("Proxy error: {}", err);
+      let (downstream, mut upstream) = if minecraft {
+        match minecraft::middleware(downstream, upstream, replicas, &scaler, minecraft_favicon.as_deref()).await.context("Error in Minecraft middleware")? {
+          Some((downstream, upstream)) => (downstream, upstream),
+          None => return Ok(()),
         }
-      },
-      Err(err) => {
-        log::error!("Error connecting to upstream server: {}", err);
-      },
+      } else {
+        if scaler.replicas().await.map(|r| r == 0).unwrap_or(false) {
+          log::info!("Received request, scaling up.");
+          let _ = scaler.scale_to(1).await;
+        }
+
+        (downstream, upstream)
+      };
+
+      let upstream = if let Some(upstream) = upstream.take() {
+        upstream
+      } else {
+        connect_to_upstream_server().await?
+      };
+
+      proxy(downstream, upstream).await.context("Proxy error")?;
+
+      Ok::<(), anyhow::Error>(())
+    };
+
+    if let Err(err) = proxy().await {
+      log::error!("{}", err);
     }
 
     Ok(())

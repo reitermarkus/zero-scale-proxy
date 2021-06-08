@@ -2,7 +2,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::ZeroScaler;
 
-use anyhow::{anyhow, Context};
+use anyhow::anyhow;
 use minecraft_protocol::Decoder;
 use minecraft_protocol::Encoder;
 use minecraft_protocol::chat::Payload;
