@@ -2,8 +2,8 @@
 
 set -euo pipefail
 
-: ${image:=reitermarkus/zero-scale-proxy}
-: ${cache_image:=${image}:cache}
+: "${image:=reitermarkus/zero-scale-proxy}"
+: "${cache_image:=${image}:cache}"
 
 docker buildx create --name mybuilder || true
 docker buildx use mybuilder
