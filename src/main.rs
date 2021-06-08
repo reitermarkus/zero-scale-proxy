@@ -153,7 +153,7 @@ async fn main() -> anyhow::Result<()> {
         let _ = scaler.scale_to(1).await;
       }
 
-      (downstream, None)
+      (downstream, upstream)
     };
 
     log::info!("Connecting to upstream server {}:{} …", upstream_ip, port);
