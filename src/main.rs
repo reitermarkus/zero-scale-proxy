@@ -133,6 +133,7 @@ async fn main() -> anyhow::Result<()> {
     log::info!("Replica status: {}/{} ready, {}/{} available", ready_replicas, replicas, available_replicas, replicas);
 
     let upstream = if available_replicas > 0 {
+      log::info!("Connecting to upstream server {}:{}.", upstream_ip, port);
       Some(TcpStream::connect((upstream_ip.as_str(), port)).await?)
     } else {
       None
@@ -156,10 +157,10 @@ async fn main() -> anyhow::Result<()> {
       (downstream, upstream)
     };
 
-    log::info!("Connecting to upstream server {}:{} …", upstream_ip, port);
     let upstream = if let Some(upstream) = upstream.take() {
       Ok(upstream)
     } else {
+      log::info!("Connecting to upstream server {}:{}.", upstream_ip, port);
       TcpStream::connect((upstream_ip.as_str(), port)).await
     };
 

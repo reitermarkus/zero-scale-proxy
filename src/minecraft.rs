@@ -99,9 +99,11 @@ pub async fn middleware(downstream: TcpStream, upstream: Option<TcpStream>, repl
     None
   };
 
-  log::trace!("middleware loop");
   let mut state = 0;
   loop {
+    log::trace!("middleware loop");
+    log::trace!("state = {}", state);
+
     let packet = if let Some(ref mut upstream_std) = upstream_std {
       proxy_packet(&mut downstream_std, upstream_std)?
     } else {
