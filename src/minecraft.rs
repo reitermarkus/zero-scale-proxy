@@ -2,7 +2,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::ZeroScaler;
 
-use anyhow::anyhow;
+use anyhow::{anyhow, Context};
 use minecraft_protocol::Decoder;
 use minecraft_protocol::Encoder;
 use minecraft_protocol::chat::Payload;
@@ -22,8 +22,8 @@ use tokio::net::TcpStream;
 
 fn proxy_packet(source: &mut std::net::TcpStream, destination: &mut std::net::TcpStream) -> anyhow::Result<Packet> {
   log::trace!("proxy_packet");
-  let packet = Packet::decode(source).map_err(|e| anyhow!("{:?}", e))?;
-  packet.encode(destination).map_err(|e| anyhow!("{:?}", e))?;
+  let packet = Packet::decode(source).map_err(|e| anyhow!("Error decoding packet: {:?}", e))?;
+  packet.encode(destination).map_err(|e| anyhow!("Error forwarding packet: {:?}", e))?;
   return Ok(packet);
 }
 
@@ -105,42 +105,49 @@ pub async fn middleware(downstream: TcpStream, upstream: Option<TcpStream>, repl
     let packet = if let Some(ref mut upstream_std) = upstream_std {
       proxy_packet(&mut downstream_std, upstream_std)?
     } else {
-      Packet::decode(&mut downstream_std).map_err(|e| anyhow!("{:?}", e))?
+      log::trace!("Packet::decode");
+      Packet::decode(&mut downstream_std).map_err(|e| anyhow!("Error decoding packet: {:?}", e))?
     };
 
     match state {
       0 => {
         log::trace!("handshake");
 
-        let handshake = ServerBoundHandshake::decode(&mut packet.data.as_slice()).map_err(|e| anyhow!("{:?}", e))?;
+        let handshake = ServerBoundHandshake::decode(&mut packet.data.as_slice())
+          .map_err(|e| anyhow!("Error decoding handshake packet: {:?}", e))?;
         state = handshake.next_state;
       },
-      1 => match StatusServerBoundPacket::decode(packet.id as u8, &mut packet.data.as_slice()).map_err(|e| anyhow!("{:?}", e))? {
-        StatusServerBoundPacket::StatusRequest => {
-          log::trace!("status");
+      1 => {
+        let status_packet = StatusServerBoundPacket::decode(packet.id as u8, &mut packet.data.as_slice())
+          .map_err(|e| anyhow!("Error decoding status packet: {:?}", e))?;
 
-          if upstream_std.is_some() {
-            break
-          } else {
-            let response = if replicas > 0 {
-              status_response("starting", "Server is starting.", favicon)
+        match status_packet {
+          StatusServerBoundPacket::StatusRequest => {
+            log::trace!("status");
+
+            if upstream_std.is_some() {
+              break
             } else {
-              status_response("idle", "Server is currently idle.", favicon)
-            };
+              let response = if replicas > 0 {
+                status_response("starting", "Server is starting.", favicon)
+              } else {
+                status_response("idle", "Server is currently idle.", favicon)
+              };
 
-            response
+              response
+                .encode(&mut downstream_std)
+                .map_err(|e| anyhow!("Error sending status response: {:?}", e))?;
+              return Ok(None)
+            }
+          },
+          StatusServerBoundPacket::PingRequest(..) => {
+            log::trace!("ping");
+
+            ping_response()
               .encode(&mut downstream_std)
-              .map_err(|e| anyhow!("{:?}", e))?;
+              .map_err(|e| anyhow!("Error sending ping response: {:?}", e))?;
             return Ok(None)
           }
-        },
-        StatusServerBoundPacket::PingRequest(..) => {
-          log::trace!("ping");
-
-          ping_response()
-            .encode(&mut downstream_std)
-            .map_err(|e| anyhow!("{:?}", e))?;
-          return Ok(None)
         }
       },
       2 => match LoginServerBoundPacket::decode(packet.id as u8, &mut packet.data.as_slice()).map_err(|e| anyhow!("{:?}", e))? {
@@ -153,7 +160,7 @@ pub async fn middleware(downstream: TcpStream, upstream: Option<TcpStream>, repl
 
             login_response()
               .encode(&mut downstream_std)
-              .map_err(|e| anyhow!("{:?}", e))?;
+              .map_err(|e| anyhow!("Error sending login response: {:?}", e))?;
 
             if let Err(err) = scaling.await {
               log::error!("Scaling failed: {}", err);
