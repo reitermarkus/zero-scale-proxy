@@ -166,6 +166,7 @@ async fn udp_proxy(host: &str, port: u16) -> anyhow::Result<()> {
             }
           }
 
+          #[allow(unreachable_code)]
           Ok::<(), anyhow::Error>(())
         };
 
@@ -177,6 +178,7 @@ async fn udp_proxy(host: &str, port: u16) -> anyhow::Result<()> {
             downstream_send.send_to(&buf[..size], downstream_addr).await?;
           }
 
+          #[allow(unreachable_code)]
           Ok::<(), anyhow::Error>(())
         };
 
@@ -185,6 +187,7 @@ async fn udp_proxy(host: &str, port: u16) -> anyhow::Result<()> {
           res = backwarder => res?,
         };
 
+        #[allow(unreachable_code)]
         Ok::<(), anyhow::Error>(())
       });
 
