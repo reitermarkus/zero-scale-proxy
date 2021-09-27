@@ -260,6 +260,11 @@ async fn main() -> anyhow::Result<()> {
     namespace: namespace.into(),
   };
 
+  log::info!("Proxying the following ports:");
+  for port in &ports {
+    log::info!("  {}/{}", port.0, port.1);
+  }
+
   let active_connections = Arc::new(RwLock::new((0, Instant::now())));
 
   let idle_checker = async {
