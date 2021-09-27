@@ -31,7 +31,7 @@ async fn proxy(mut downstream: TcpStream, mut upstream: TcpStream) -> io::Result
 
 async fn listener_stream(port: u16) -> anyhow::Result<TcpListenerStream> {
   let listener = TcpListener::bind((Ipv4Addr::new(0, 0, 0, 0), port)).await?;
-  log::info!("Listening on {}.", listener.local_addr()?);
+  log::info!("Listening on {}/tcp.", listener.local_addr()?);
   Ok(TcpListenerStream::new(listener))
 }
 
@@ -126,7 +126,7 @@ async fn udp_proxy(host: &str, port: u16) -> anyhow::Result<()> {
   let upstream_addr = (host, port);
 
   let downstream = UdpSocket::bind((Ipv4Addr::new(0, 0, 0, 0), port)).await?;
-  println!("Listening on: {}/udp", downstream.local_addr()?);
+  log::info!("Listening on {}/udp.", downstream.local_addr()?);
   let downstream_recv = Arc::new(downstream);
 
   let mut senders = HashMap::<SocketAddr, UnboundedSender<Vec<u8>>>::new();
@@ -208,11 +208,10 @@ async fn udp_proxy(host: &str, port: u16) -> anyhow::Result<()> {
 async fn main() -> anyhow::Result<()> {
   env_logger::init();
 
-  let service: String = env::var("SERVICE").expect("SERVICE is not set");
   let deployment: String = env::var("DEPLOYMENT").expect("DEPLOYMENT is not set");
   let namespace: String = env::var("NAMESPACE").expect("NAMESPACE is not set");
   let timeout: Duration = Duration::from_secs(
-    env::var("TIMEOUT").map(|t| t.parse::<u64>().expect("TIMEOUT is not a number")).unwrap_or(60)
+    env::var("TIMEOUT").map(|t| t.parse::<u64>().expect("TIMEOUT is not a number")).unwrap_or(600)
   );
   let proxy_type = env::var("PROXY_TYPE").ok();
 
@@ -232,6 +231,8 @@ async fn main() -> anyhow::Result<()> {
 
     (ip, ports)
   } else {
+    let service: String = env::var("SERVICE").expect("SERVICE is not set");
+
     let client = Client::try_default().await?;
     let services: Api<Service> = Api::namespaced(client, &namespace);
     let service = services.get(&service).await?;
