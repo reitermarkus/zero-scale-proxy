@@ -39,7 +39,7 @@ pub async fn udp_proxy(host: impl AsRef<str>, port: u16, active_connections: Arc
 
     match proxy_type.as_deref() {
       Some("7d2d") => {
-        todo!()
+        scale_up(scaler).await
       },
       _ => scale_up(scaler).await,
     }
@@ -93,10 +93,10 @@ pub async fn udp_proxy(host: impl AsRef<str>, port: u16, active_connections: Arc
 
         tokio::select! {
           res = forwarder => if let Err(err) = res {
-            log::error!("Forwarder failed: {}", err);
+            log::error!("Forwarder for port {} failed: {}", port, err);
           },
           res = backwarder => if let Err(err) = res {
-            log::error!("Backwarder failed: {:?}", err);
+            log::error!("Backwarder for port {} failed: {:?}", port, err);
           },
         }
 
