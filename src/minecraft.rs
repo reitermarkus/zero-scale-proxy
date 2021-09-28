@@ -24,7 +24,7 @@ fn proxy_packet(source: &mut std::net::TcpStream, destination: &mut std::net::Tc
   log::trace!("proxy_packet");
   let packet = Packet::decode(source).map_err(|e| anyhow!("Error decoding packet: {:?}", e))?;
   packet.encode(destination).map_err(|e| anyhow!("Error forwarding packet: {:?}", e))?;
-  return Ok(packet);
+  Ok(packet)
 }
 
 fn status_response(state: &str, message: &str, favicon: Option<&str>) -> Packet {

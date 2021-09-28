@@ -86,7 +86,7 @@ async fn tcp_proxy(host: &str, port: u16, active_connections: Arc<RwLock<(usize,
         Some("minecraft") => {
           let minecraft_favicon = env::var("MINECRAFT_FAVICON").ok();
 
-          match minecraft::middleware(downstream, upstream, replicas, &scaler, minecraft_favicon.as_deref()).await.context("Error in Minecraft middleware")? {
+          match minecraft::middleware(downstream, upstream, replicas, scaler, minecraft_favicon.as_deref()).await.context("Error in Minecraft middleware")? {
             Some((downstream, upstream)) => (downstream, upstream),
             None => return Ok(()),
           }
@@ -157,16 +157,10 @@ async fn udp_proxy(host: &str, port: u16) -> anyhow::Result<()> {
         let upstream_recv = Arc::clone(&upstream);
 
         let forwarder = async move {
-          loop {
-            match receiver.recv().await {
-              Some(buf) => {
-                upstream_send.send(&buf).await?;
-              }
-              None => break,
-            }
+          while let Some(buf) = receiver.recv().await {
+            upstream_send.send(&buf).await?;
           }
 
-          #[allow(unreachable_code)]
           Ok::<(), anyhow::Error>(())
         };
 
@@ -216,7 +210,7 @@ async fn main() -> anyhow::Result<()> {
   let proxy_type = env::var("PROXY_TYPE").ok();
 
   let (upstream_ip, ports) = if let Some((ip, ports)) = env::var("UPSTREAM_IP").ok().zip(env::var("PORTS").ok()) {
-    let ports = ports.split(",").flat_map(|port| {
+    let ports = ports.split(',').flat_map(|port| {
       if let Some((port, protocol)) = port.split_once("/") {
         vec![
           (port.parse::<u16>().unwrap(), protocol.to_owned()),
@@ -245,7 +239,7 @@ async fn main() -> anyhow::Result<()> {
 
     let ports = service.spec.as_ref().and_then(|s| {
       s.ports.as_ref().map(|ports| ports.iter().map(|port| {
-        (port.port as u16, port.protocol.as_ref().map(|p| p.to_lowercase()).unwrap_or("tcp".into()))
+        (port.port as u16, port.protocol.as_ref().map(|p| p.to_lowercase()).unwrap_or_else(|| "tcp".into()))
       }).collect())
     }).unwrap_or_default();
 
@@ -256,8 +250,8 @@ async fn main() -> anyhow::Result<()> {
   };
 
   let scaler = ZeroScaler {
-    name: deployment.into(),
-    namespace: namespace.into(),
+    name: deployment,
+    namespace,
   };
 
   log::info!("Proxying the following ports:");

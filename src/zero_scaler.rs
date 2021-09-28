@@ -36,7 +36,6 @@ impl ZeroScaler {
       metadata: ObjectMeta { name: Some(self.name.to_owned()), ..Default::default() },
       spec: Some(ScaleSpec {
         replicas: Some(replicas),
-        ..Default::default()
       }),
       ..Default::default()
     };
