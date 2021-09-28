@@ -116,9 +116,10 @@ async fn main() -> anyhow::Result<()> {
               continue
             }
           }
+        } else {
+          log::debug!("Idle timeout not yet reached. Next check in {} seconds.", timeout.as_secs());
         }
 
-        log::debug!("Idle timeout not yet reached. Next check in {} seconds.", timeout.as_secs());
         timer = sleep(timeout);
       }
 
