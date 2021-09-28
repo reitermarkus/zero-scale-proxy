@@ -10,7 +10,7 @@ Zero-scale Proxy
 | `DEPLOYMENT` | name of the Kubernetes deployment                                  | N/A           |
 | `NAMESPACE`  | namespace of the Kubernetes deployment and service                 | N/A           |
 | `TIMEOUT`    | timeout in seconds after which the deployment is scaled down again | `600`         |
-| `PROXY_TYPE` | type of proxy (e.g. `minecraft`)                                   | N/A           |
+| `PROXY_TYPE` | type of proxy (e.g. `minecraft`, `7d2d`)                           | N/A           |
 
 # Testing
 

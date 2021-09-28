@@ -87,7 +87,7 @@ fn login_response() -> Packet {
   }
 }
 
-pub async fn middleware(downstream: TcpStream, upstream: Option<TcpStream>, replicas: i32, scaler: &ZeroScaler, favicon: Option<&str>) -> anyhow::Result<Option<(TcpStream, Option<TcpStream>)>> {
+pub async fn middleware(downstream: TcpStream, upstream: Option<TcpStream>, replicas: usize, scaler: &ZeroScaler, favicon: Option<&str>) -> anyhow::Result<Option<(TcpStream, Option<TcpStream>)>> {
   let mut downstream_std = downstream.into_std()?;
   downstream_std.set_nonblocking(false)?;
 

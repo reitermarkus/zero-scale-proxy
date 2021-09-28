@@ -5,6 +5,12 @@ use k8s_openapi::api::autoscaling::v1::ScaleSpec;
 use k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
 use kube::{Api, api::{ListParams, Patch, PatchParams, WatchEvent}, Client};
 
+pub struct ReplicaStatus {
+  pub available: usize,
+  pub ready: usize,
+  pub wanted: usize,
+}
+
 pub struct ZeroScaler {
   pub name: String,
   pub namespace: String,
@@ -23,6 +29,26 @@ impl ZeroScaler {
   pub async fn replicas(&self) -> Result<i32, kube::Error> {
     let scale = self.scale().await?;
     Ok(scale.spec.and_then(|spec| spec.replicas).unwrap_or(0))
+  }
+
+  pub async fn replica_status(&self) -> ReplicaStatus {
+    let deployments = self.deployments().await;
+    let deployment = if let Ok(deployments) = deployments {
+      deployments.get(&self.name).await.ok()
+    } else {
+      None
+    };
+    let deployment_status = deployment.and_then(|d| d.status);
+    let replicas = deployment_status.as_ref().and_then(|s| s.replicas).unwrap_or(0);
+    let ready_replicas = deployment_status.as_ref().and_then(|s| s.ready_replicas).unwrap_or(0);
+    let available_replicas = deployment_status.as_ref().and_then(|s| s.available_replicas).unwrap_or(0);
+    log::info!("{}/{} replicas ready, {}/{} available.", ready_replicas, replicas, available_replicas, replicas);
+
+    ReplicaStatus {
+      ready: ready_replicas as usize,
+      available: available_replicas as usize,
+      wanted: replicas as usize,
+    }
   }
 
   pub async fn scale_to(&self, replicas: i32) -> Result<(), kube::Error> {
