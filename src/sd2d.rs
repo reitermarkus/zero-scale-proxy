@@ -1,10 +1,10 @@
 use a2s::info::{Info, ServerType, ServerOS, ExtendedServerInfo};
 
-pub fn status_response() -> Info {
+pub fn status_response(state: &str) -> Info {
   Info {
     protocol: 0,
     name: "7 Days to Die".into(),
-    map: "idle".into(),
+    map: state.to_owned(),
     folder: "7DTD".into(),
     game: "7 Days To Die".into(),
     app_id: 0,

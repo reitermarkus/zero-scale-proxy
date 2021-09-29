@@ -72,10 +72,10 @@ async fn main() -> anyhow::Result<()> {
     }).collect()
   };
 
-  let scaler = ZeroScaler {
+  let scaler = Arc::new(ZeroScaler {
     name: deployment,
     namespace,
-  };
+  });
 
   log::info!("Proxying the following ports:");
   for (ip, (port, protocol)) in &upstreams {
@@ -128,10 +128,10 @@ async fn main() -> anyhow::Result<()> {
 
   let proxies = try_join_all(upstreams.into_iter().map(|(ip, (port, protocol))| match protocol.as_ref() {
     "tcp" => {
-      Either::Left(proxy::tcp(ip, port, active_connections.clone(), &scaler, proxy_type.clone()))
+      Either::Left(proxy::tcp(ip, port, active_connections.clone(), scaler.as_ref(), proxy_type.clone()))
     },
     "udp" => {
-      Either::Right(proxy::udp(ip, port, active_connections.clone(), &scaler, proxy_type.clone()))
+      Either::Right(proxy::udp(ip, port, active_connections.clone(), scaler.clone(), proxy_type.clone(), timeout))
     },
     _ => unreachable!(),
   }));
