@@ -97,10 +97,46 @@ pub async fn udp_proxy(host: impl AsRef<str>, port: u16, active_connections: Arc
             let (size, upstream_addr) = upstream_recv.recv_from(&mut buf).await.context("Error receiving from upstream")?;
 
             if port == 26900 {
+              use std::io::Cursor;
               log::debug!("Received {} bytes from {}: {:?}", size, upstream_addr, (&buf[..size]).hex_dump());
-            }
+              let b = buf[4..size].to_vec();
+              let mut info = a2s::info::Info::from_cursor(Cursor::new(b)).unwrap();
+              log::debug!("{:?}", info);
 
-            downstream_send.send_to(&buf[..size], downstream_addr).await.context("Error sending to downstream")?;
+              let info = a2s::info::Info {
+                protocol: 0,
+                name: "7 Days to Die".into(),
+                map: "idle".into(),
+                folder: "".into(),
+                game: "".into(),
+                app_id: 0,
+                players: 0,
+                max_players: 0,
+                bots: 0,
+                server_type: a2s::info::ServerType::Dedicated,
+                server_os: a2s::info::ServerOS::Linux,
+                visibility: true,
+                vac: false,
+                the_ship: None,
+                version: "".into(),
+                edf: 0x80 | 0x10 | 0x20 | 0x01 | 0x40 * 0,
+                extended_server_info: a2s::info::ExtendedServerInfo {
+                  port: Some(26902),
+                  steam_id: Some(90151620823146498),
+                  keywords: Some("AjxBAQAIAAOB0AESQYgBpAEePAQpHh4ABAQyugMAAwMDpAGkAaQBpAEFAAgtALMB".into()),
+                  game_id: Some(251570),
+                },
+                source_tv: None,
+              };
+
+              let info_buf = info.to_bytes();
+
+              log::debug!("to_bytes = {:?}", info_buf.hex_dump());
+
+              downstream_send.send_to(&info_buf, downstream_addr).await.context("Error sending to downstream")?;
+            } else {
+              downstream_send.send_to(&buf[..size], downstream_addr).await.context("Error sending to downstream")?;
+            }
           }
 
           #[allow(unused)]

@@ -4,9 +4,8 @@ version = 3
 
 [[package]]
 name = "a2s"
-version = "0.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "595288bc8fed299960fc47b162277c181ca75fef3a890bf5740e525857e4fb1b"
+version = "0.4.0"
+source = "git+https://github.com/reitermarkus/a2s-rs?branch=master#ab08d87c53836177d5ad811fe29b804ea1cdb6e5"
 dependencies = [
  "byteorder",
  "bzip2",
