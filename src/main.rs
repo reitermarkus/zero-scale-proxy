@@ -9,7 +9,7 @@ use tokio::join;
 use tokio::time::{sleep, sleep_until, Duration, Instant};
 
 mod minecraft;
-mod sd2d;
+pub mod sd2d;
 mod zero_scaler;
 pub(crate) use zero_scaler::ZeroScaler;
 
@@ -39,7 +39,6 @@ async fn main() -> anyhow::Result<()> {
         ].into_iter()
       }
     });
-
 
     ports.map(|port| (ip.clone(), port)).collect()
   } else {

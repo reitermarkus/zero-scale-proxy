@@ -4,12 +4,14 @@ use std::sync::{Arc, RwLock};
 
 use anyhow::Context;
 use pretty_hex::PrettyHex;
+use tokio::io::{self, Interest};
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc::{self, UnboundedSender};
-use tokio::time::Instant;
+use tokio::time::{Instant, Duration, timeout};
 
 use crate::ZeroScaler;
 use super::{register_connection, scale_up};
+use crate::sd2d;
 
 async fn listener(port: u16) -> anyhow::Result<Arc<UdpSocket>> {
   let downstream = UdpSocket::bind((Ipv4Addr::new(0, 0, 0, 0), port)).await?;
@@ -50,8 +52,12 @@ pub async fn udp_proxy(host: impl AsRef<str>, port: u16, active_connections: Arc
       },
     };
     buf.truncate(size);
-    let _defer_guard = register_connection(active_connections.clone(), downstream_addr);
-    let _replicas = scaler.replica_status().await;
+    let defer_guard = if !senders.contains_key(&downstream_addr) {
+      Some(register_connection(active_connections.clone(), downstream_addr))
+    } else {
+      None
+    };
+    // let _replicas = scaler.replica_status().await;
 
     log::debug!("Cached senders for {}: {}", upstream, senders.len());
 
@@ -74,6 +80,8 @@ pub async fn udp_proxy(host: impl AsRef<str>, port: u16, active_connections: Arc
       let (sender, mut receiver) = mpsc::unbounded_channel::<Vec<u8>>();
 
       tokio::spawn(async move {
+        let _defer_guard = defer_guard;
+
         let upstream = Arc::new(UdpSocket::bind((Ipv4Addr::new(0, 0, 0, 0), 0)).await?);
         upstream.connect(&upstream_addr).await?;
 
@@ -103,39 +111,17 @@ pub async fn udp_proxy(host: impl AsRef<str>, port: u16, active_connections: Arc
               let mut info = a2s::info::Info::from_cursor(Cursor::new(b)).unwrap();
               log::debug!("{:?}", info);
 
-              let info = a2s::info::Info {
-                protocol: 0,
-                name: "7 Days to Die".into(),
-                map: "idle".into(),
-                folder: "".into(),
-                game: "".into(),
-                app_id: 0,
-                players: 0,
-                max_players: 0,
-                bots: 0,
-                server_type: a2s::info::ServerType::Dedicated,
-                server_os: a2s::info::ServerOS::Linux,
-                visibility: true,
-                vac: false,
-                the_ship: None,
-                version: "".into(),
-                edf: 0x80 | 0x10 | 0x20 | 0x01 | 0x40 * 0,
-                extended_server_info: a2s::info::ExtendedServerInfo {
-                  port: Some(26902),
-                  steam_id: Some(90151620823146498),
-                  keywords: Some("AjxBAQAIAAOB0AESQYgBpAEePAQpHh4ABAQyugMAAwMDpAGkAaQBpAEFAAgtALMB".into()),
-                  game_id: Some(251570),
-                },
-                source_tv: None,
-              };
+              let info = sd2d::status_response();
 
               let info_buf = info.to_bytes();
 
               log::debug!("to_bytes = {:?}", info_buf.hex_dump());
 
-              downstream_send.send_to(&info_buf, downstream_addr).await.context("Error sending to downstream")?;
+              timeout(Duration::from_secs(30), downstream_send.send_to(&info_buf, downstream_addr))
+                .await.context("Error sending to downstream")??;
             } else {
-              downstream_send.send_to(&buf[..size], downstream_addr).await.context("Error sending to downstream")?;
+              timeout(Duration::from_secs(30), downstream_send.send_to(&buf[..size], downstream_addr))
+                .await.context("Error sending to downstream")??;
             }
           }
 
