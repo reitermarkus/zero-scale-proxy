@@ -136,8 +136,10 @@ async fn main() -> anyhow::Result<()> {
     _ => unreachable!(),
   }));
 
-  let (_, proxies_result) = join!(idle_checker, proxies);
-  proxies_result?;
+  tokio::select! {
+    res = idle_checker => res,
+    res = proxies => res?,
+  };
 
   Ok(())
 }

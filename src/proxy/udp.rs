@@ -33,18 +33,6 @@ pub async fn udp_proxy(host: impl AsRef<str>, port: u16, active_connections: Arc
   let mut senders = LruCache::<SocketAddr, UnboundedSender<Vec<u8>>>::with_expiry_duration(timeout_duration);
 
   loop {
-    // Clean up cached senders whose receiver is gone.
-    let mut closed_senders = vec![];
-    for (downstream_addr, sender) in senders.peek_iter() {
-      if sender.is_closed() {
-        closed_senders.push(downstream_addr.clone());
-      }
-    }
-    for downstream_addr in closed_senders {
-      log::debug!("Removing cached {} sender for {}.", upstream, downstream_addr);
-      senders.remove(&downstream_addr);
-    }
-
     let mut buf = vec![0; 64 * 1024];
     let (size, downstream_addr) = match downstream_recv.recv_from(&mut buf).await.context("Error receiving from downstream") {
       Ok(ok) => ok,
@@ -55,7 +43,7 @@ pub async fn udp_proxy(host: impl AsRef<str>, port: u16, active_connections: Arc
     };
     buf.truncate(size);
 
-    log::debug!("Cached senders for {}: {}", upstream, senders.len());
+    // log::debug!("Cached senders for {}: {}", upstream, senders.len());
 
     let upstream_addr = (host.to_owned(), port);
     let downstream_send = Arc::clone(&downstream_recv);
@@ -75,40 +63,45 @@ pub async fn udp_proxy(host: impl AsRef<str>, port: u16, active_connections: Arc
         let upstream_send = Arc::clone(&upstream);
         let upstream_recv = Arc::clone(&upstream);
 
-        let replicas = scaler.replica_status().await;
-
         let mut recv_buf = vec![0; 64 * 1024];
         match proxy_type.as_deref() {
           Some("7d2d") => {
-            if replicas.available == 0 || true {
-              let base_port = 26900;
+            let should_return = timeout(timeout_duration, async {
+              if let Some(send_buf) = receiver.recv().await {
+                upstream_send.send(&send_buf).await.context("Error sending to upstream")?;
 
-              if port == base_port || port == base_port + 2 {
-                if let Some(send_buf) = receiver.recv().await {
-                  upstream_send.send(&send_buf).await.context("Error sending to upstream")?;
+                // log::info!("send_buf {}: {:?}", port, send_buf.hex_dump());
 
-                  let buf = if send_buf == INFO_REQUEST {
-                    let info = if replicas.wanted > 0 {
-                      sd2d::status_response("starting")
-                    } else {
-                      sd2d::status_response("idle")
-                    };
-                    info.to_bytes()
+                let (should_return, buf) = if send_buf == INFO_REQUEST {
+                  let replicas = scaler.replica_status().await;
+                  if replicas.wanted == 0 {
+                    (true, sd2d::status_response("idle").to_bytes())
                   } else {
-                    log::info!("send_buf {}: {:?}", port, send_buf.hex_dump());
+                    match upstream_recv.recv_from(&mut recv_buf).await {
+                      Ok((size, _)) => (false, recv_buf[..size].to_vec()),
+                      Err(_) => (true, sd2d::status_response("starting").to_bytes()),
+                    }
+                  }
+                } else {
+                  scale_up(scaler.as_ref()).await;
 
-                    let (size, _) = upstream_recv.recv_from(&mut recv_buf).await.context("Error receiving from upstream")?;
-                    log::info!("recv_buf {}: {:?}", port, (&recv_buf[..size]).hex_dump());
+                  let (size, _) = upstream_recv.recv_from(&mut recv_buf).await.context("Error receiving from upstream")?;
+                  // log::info!("recv_buf {}: {:?}", port, (&recv_buf[..size]).hex_dump());
+                  (false, recv_buf[..size].to_vec())
+                };
 
-                    recv_buf[..size].to_vec()
-                  };
+                downstream_send.send_to(&buf, downstream_addr)
+                  .await.context("Error sending to downstream")?;
 
-                  timeout(timeout_duration, downstream_send.send_to(&buf, downstream_addr))
-                    .await.context("Error sending to downstream")??;
-                }
+
+                Ok(should_return)
+              } else {
+                Ok::<_, anyhow::Error>(true)
               }
+            }).await??;
 
-              scale_up(scaler.as_ref()).await;
+            if should_return {
+              return Ok(())
             }
           },
           _ => scale_up(scaler.as_ref()).await,
@@ -119,6 +112,9 @@ pub async fn udp_proxy(host: impl AsRef<str>, port: u16, active_connections: Arc
           loop {
             let forward = async {
               if let Some(send_buf) = receiver.recv().await {
+
+                // log::info!("send_buf {}: {:?}", port, send_buf.hex_dump());
+
                 Some(upstream_send.send(&send_buf)
                   .await.context("Error sending to upstream"))
               } else {
@@ -143,6 +139,8 @@ pub async fn udp_proxy(host: impl AsRef<str>, port: u16, active_connections: Arc
             let backward = async {
               let (size, _) = upstream_recv.recv_from(&mut recv_buf)
                 .await.context("Error receiving from upstream")?;
+
+              // log::info!("recv_buf {}: {:?}", port, (&recv_buf[..size]).hex_dump());
 
               downstream_send.send_to(&recv_buf[..size], downstream_addr)
                 .await.context("Error sending to downstream")?;
@@ -175,6 +173,18 @@ pub async fn udp_proxy(host: impl AsRef<str>, port: u16, active_connections: Arc
 
       sender
     };
+
+    // Clean up cached senders whose receiver is gone.
+    let mut closed_senders = vec![];
+    for (downstream_addr, sender) in senders.peek_iter() {
+      if sender.is_closed() {
+        closed_senders.push(downstream_addr.clone());
+      }
+    }
+    for downstream_addr in closed_senders {
+      log::debug!("Removing cached {} sender for {}.", upstream, downstream_addr);
+      senders.remove(&downstream_addr);
+    }
 
     let sender = senders.entry(downstream_addr).or_insert_with(|| {
       log::debug!("Creating {} sender for {}.", upstream, downstream_addr);

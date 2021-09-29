@@ -5,12 +5,14 @@ use k8s_openapi::api::autoscaling::v1::ScaleSpec;
 use k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
 use kube::{Api, api::{ListParams, Patch, PatchParams, WatchEvent}, Client};
 
+#[derive(Debug)]
 pub struct ReplicaStatus {
   pub available: usize,
   pub ready: usize,
   pub wanted: usize,
 }
 
+#[derive(Debug)]
 pub struct ZeroScaler {
   pub name: String,
   pub namespace: String,
