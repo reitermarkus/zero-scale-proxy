@@ -5,7 +5,6 @@ use futures::future::Either;
 use futures::future::try_join_all;
 use kube::{Api, Client};
 use k8s_openapi::api::core::v1::Service;
-use tokio::join;
 use tokio::time::{sleep, sleep_until, Duration, Instant};
 
 mod minecraft;

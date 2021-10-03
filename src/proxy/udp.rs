@@ -1,12 +1,11 @@
+use std::collections::HashMap;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::{Arc, RwLock};
 
 use anyhow::Context;
-use lru_time_cache::LruCache;
 use pretty_hex::PrettyHex;
-use tokio::io::{self, Interest};
 use tokio::net::UdpSocket;
-use tokio::sync::mpsc::{self, UnboundedSender, error::TryRecvError};
+use tokio::sync::mpsc::{self, UnboundedSender, UnboundedReceiver};
 use tokio::time::{Instant, Duration, timeout};
 
 use crate::ZeroScaler;
@@ -24,13 +23,93 @@ const INFO_REQUEST: [u8; 25] = [
   0x6e, 0x65, 0x20, 0x51, 0x75, 0x65, 0x72, 0x79, 0x00,
 ];
 
-pub async fn udp_proxy(host: impl AsRef<str>, port: u16, active_connections: Arc<RwLock<(usize, Instant)>>, scaler: Arc<ZeroScaler>, proxy_type: Option<String>, timeout_duration: Duration) -> anyhow::Result<()> {
+const RULES_REQUEST: [u8; 5] = [0xFF, 0xFF, 0xFF, 0xFF, 0x56];
+
+
+// Forward from downstream to upstream.
+async fn forwarder(
+  mut downstream_recv: UnboundedReceiver<Vec<u8>>,
+  upstream_send: Arc<UdpSocket>,
+  timeout_duration: Duration
+) -> anyhow::Result<()> {
+  loop {
+    let forward = async {
+      if let Some(send_buf) = downstream_recv.recv().await {
+        Some(upstream_send.send(&send_buf)
+          .await.context("Error sending to upstream"))
+      } else {
+        None
+      }
+    };
+
+    match timeout(timeout_duration, forward).await {
+      Ok(Some(Err(err))) => return Err(err),
+      Ok(None) => return Ok(()),
+      Ok(_) => (),
+      Err(_) => return Ok(()),
+    }
+  }
+}
+
+// Backward from upstream to downstream.
+async fn backwarder(
+  upstream_recv: Arc<UdpSocket>,
+  downstream_send: Arc<UdpSocket>,
+  downstream_addr: SocketAddr,
+  timeout_duration: Duration
+) -> anyhow::Result<()> {
+  let mut recv_buf = vec![0; 64 * 1024];
+  loop {
+    let backward = async {
+      let (size, _) = upstream_recv.recv_from(&mut recv_buf)
+        .await.context("Error receiving from upstream")?;
+
+      downstream_send.send_to(&recv_buf[..size], downstream_addr)
+        .await.context("Error sending to downstream")?;
+
+      Ok::<(), anyhow::Error>(())
+    };
+
+    match timeout(timeout_duration, backward).await {
+      Ok(Err(err)) => return Err(err),
+      Ok(_) => (),
+      Err(_) => return Ok(()),
+    }
+  }
+}
+
+async fn proxy(
+  downstream_recv: UnboundedReceiver<Vec<u8>>,
+  downstream_send: Arc<UdpSocket>,
+  downstream_addr: SocketAddr,
+  upstream_recv: Arc<UdpSocket>,
+  upstream_send: Arc<UdpSocket>,
+  timeout_duration: Duration
+) {
+  tokio::select! {
+    res = forwarder(downstream_recv, upstream_send, timeout_duration) => if let Err(err) = res {
+      log::error!("Forwarder failed: {}", err);
+    },
+    res = backwarder(upstream_recv, downstream_send, downstream_addr, timeout_duration) => if let Err(err) = res {
+      log::error!("Backwarder failed: {:?}", err);
+    },
+  }
+}
+
+pub async fn udp_proxy(
+  host: impl AsRef<str>,
+  port: u16,
+  active_connections: Arc<RwLock<(usize, Instant)>>,
+  scaler: Arc<ZeroScaler>,
+  proxy_type: Option<String>,
+  timeout_duration: Duration
+) -> anyhow::Result<()> {
   let host = host.as_ref();
   let upstream = format!("{}:{}", host, port);
 
   let downstream_recv = listener(port).await?;
 
-  let mut senders = LruCache::<SocketAddr, UnboundedSender<Vec<u8>>>::with_expiry_duration(timeout_duration);
+  let mut senders = HashMap::<SocketAddr, UnboundedSender<Vec<u8>>>::new();
 
   loop {
     let mut buf = vec![0; 64 * 1024];
@@ -66,125 +145,90 @@ pub async fn udp_proxy(host: impl AsRef<str>, port: u16, active_connections: Arc
         let mut recv_buf = vec![0; 64 * 1024];
         match proxy_type.as_deref() {
           Some("7d2d") => {
-            let should_return = timeout(timeout_duration, async {
-              if let Some(send_buf) = receiver.recv().await {
-                upstream_send.send(&send_buf).await.context("Error sending to upstream")?;
+            loop {
+              let should_continue = timeout(timeout_duration, async {
+                if let Some(send_buf) = receiver.recv().await {
+                  upstream_send.send(&send_buf).await.context("Error sending to upstream")?;
 
-                // log::info!("send_buf {}: {:?}", port, send_buf.hex_dump());
+                  log::info!("send_buf {}: {:?}", port, send_buf.hex_dump());
 
-                let (should_return, buf) = if send_buf == INFO_REQUEST {
-                  let replicas = scaler.replica_status().await;
-                  if replicas.wanted == 0 {
-                    (true, sd2d::status_response("idle").to_bytes())
-                  } else {
-                    match upstream_recv.recv_from(&mut recv_buf).await {
-                      Ok((size, _)) => (false, recv_buf[..size].to_vec()),
-                      Err(_) => (true, sd2d::status_response("starting").to_bytes()),
+                  let (should_return, buf) = if send_buf.get(0..INFO_REQUEST.len()) == Some(&INFO_REQUEST) {
+                    log::trace!("INFO_REQUEST");
+                    let replicas = scaler.replica_status().await;
+                    if replicas.wanted == 0 {
+                      (true, sd2d::status_response("idle").to_bytes())
+                    } else {
+                      match upstream_recv.recv_from(&mut recv_buf).await {
+                        Ok((size, _)) => (false, recv_buf[..size].to_vec()),
+                        Err(_) => (true, sd2d::status_response("starting").to_bytes()),
+                      }
                     }
-                  }
+                  } else {
+                    let rules_request = send_buf.get(0..RULES_REQUEST.len()) == Some(&RULES_REQUEST);
+
+                    if rules_request {
+                      log::trace!("RULES_REQUEST");
+                    }
+
+                    scale_up(scaler.as_ref()).await;
+
+                    let res = upstream_recv.recv_from(&mut recv_buf).await.context("Error receiving from upstream");
+
+                    if rules_request {
+                      dbg!(&res);
+                    }
+
+                    let (size, _) = res?;
+                    log::info!("recv_buf {}: {:?}", port, (&recv_buf[..size]).hex_dump());
+
+                    let con = if rules_request {
+                      use std::io::Cursor;
+                      let rules = a2s::rules::Rule::from_cursor(Cursor::new(recv_buf[4..size].to_vec()));
+                      dbg!(rules);
+
+                      true
+                    } else {
+                      false
+                    };
+
+
+                    (con, recv_buf[..size].to_vec())
+                  };
+
+                  downstream_send.send_to(&buf, downstream_addr)
+                    .await.context("Error sending to downstream")?;
+
+
+                  Ok(should_return)
                 } else {
-                  scale_up(scaler.as_ref()).await;
+                  Ok::<_, anyhow::Error>(true)
+                }
+              }).await?;
 
-                  let (size, _) = upstream_recv.recv_from(&mut recv_buf).await.context("Error receiving from upstream")?;
-                  // log::info!("recv_buf {}: {:?}", port, (&recv_buf[..size]).hex_dump());
-                  (false, recv_buf[..size].to_vec())
-                };
-
-                downstream_send.send_to(&buf, downstream_addr)
-                  .await.context("Error sending to downstream")?;
-
-
-                Ok(should_return)
-              } else {
-                Ok::<_, anyhow::Error>(true)
+              log::trace!("should_continue = {:?}", should_continue);
+              if !should_continue? {
+                break
               }
-            }).await??;
-
-            if should_return {
-              return Ok(())
             }
           },
           _ => scale_up(scaler.as_ref()).await,
         }
 
-        // Forward from downstream to upstream.
-        let forwarder = async move {
-          loop {
-            let forward = async {
-              if let Some(send_buf) = receiver.recv().await {
-
-                // log::info!("send_buf {}: {:?}", port, send_buf.hex_dump());
-
-                Some(upstream_send.send(&send_buf)
-                  .await.context("Error sending to upstream"))
-              } else {
-                None
-              }
-            };
-
-            match timeout(timeout_duration, forward).await {
-              Ok(Some(Err(err))) => return Err(err),
-              Ok(None) => return Ok(()),
-              Ok(_) => (),
-              Err(_) => return Ok(()),
-            }
-          }
-
-          Ok::<(), anyhow::Error>(())
-        };
-
-        // Backward from upstream to downstream.
-        let backwarder = async move {
-          loop {
-            let backward = async {
-              let (size, _) = upstream_recv.recv_from(&mut recv_buf)
-                .await.context("Error receiving from upstream")?;
-
-              // log::info!("recv_buf {}: {:?}", port, (&recv_buf[..size]).hex_dump());
-
-              downstream_send.send_to(&recv_buf[..size], downstream_addr)
-                .await.context("Error sending to downstream")?;
-
-              Ok::<(), anyhow::Error>(())
-            };
-
-            match timeout(timeout_duration, backward).await {
-              Ok(Err(err)) => return Err(err),
-              Ok(_) => (),
-              Err(_) => return Ok(()),
-            }
-          }
-
-          #[allow(unused)]
-          Ok::<(), anyhow::Error>(())
-        };
-
-        tokio::select! {
-          res = forwarder => if let Err(err) = res {
-            log::error!("Forwarder for port {} failed: {}", port, err);
-          },
-          res = backwarder => if let Err(err) = res {
-            log::error!("Backwarder for port {} failed: {:?}", port, err);
-          },
-        }
-
-        Ok::<(), anyhow::Error>(())
+        Ok::<_, anyhow::Error>(proxy(receiver, downstream_send, downstream_addr, upstream_recv, upstream_send, timeout_duration).await)
       });
 
       sender
     };
 
     // Clean up cached senders whose receiver is gone.
-    let mut closed_senders = vec![];
-    for (downstream_addr, sender) in senders.peek_iter() {
-      if sender.is_closed() {
-        closed_senders.push(downstream_addr.clone());
+    senders.retain(|downstream_addr, s| {
+      if s.is_closed() {
+        log::debug!("Removing cached {} sender for {}.", upstream, downstream_addr);
+        false
+      } else {
+        true
       }
-    }
-    for downstream_addr in closed_senders {
-      log::debug!("Removing cached {} sender for {}.", upstream, downstream_addr);
-      senders.remove(&downstream_addr);
-    }
+    });
 
     let sender = senders.entry(downstream_addr).or_insert_with(|| {
       log::debug!("Creating {} sender for {}.", upstream, downstream_addr);
