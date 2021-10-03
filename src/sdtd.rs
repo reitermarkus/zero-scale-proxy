@@ -34,7 +34,7 @@ pub fn status_response(state: &str) -> Info {
     bots: 0,
     server_type: ServerType::Dedicated,
     server_os: ServerOS::Linux,
-    visibility: false,
+    visibility: true,
     vac: false,
     the_ship: None,
     version: "".into(),
