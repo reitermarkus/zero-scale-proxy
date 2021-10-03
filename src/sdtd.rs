@@ -1,5 +1,25 @@
+use std::net::SocketAddr;
+use std::sync::Arc;
+
 use a2s::info::{Info, ServerType, ServerOS, ExtendedServerInfo};
 use a2s::rules::Rule;
+use anyhow::Context;
+use futures::TryFutureExt;
+use pretty_hex::PrettyHex;
+use tokio::net::UdpSocket;
+use tokio::sync::mpsc::UnboundedReceiver;
+
+use crate::ZeroScaler;
+use crate::proxy::scale_up;
+
+const INFO_REQUEST: [u8; 25] = [
+  0xff, 0xff, 0xff, 0xff, 0x54, 0x53, 0x6f, 0x75, 0x72, 0x63, 0x65, 0x20, 0x45, 0x6e, 0x67, 0x69,
+  0x6e, 0x65, 0x20, 0x51, 0x75, 0x65, 0x72, 0x79, 0x00,
+];
+
+const RULES_REQUEST: [u8; 5] = [0xFF, 0xFF, 0xFF, 0xFF, 0x56];
+
+const LOGIN_REQUEST: [u8; 5] = [0x08, 0x07, 0x00, 0x00, 0x00];
 
 pub fn status_response(state: &str) -> Info {
   Info {
@@ -14,7 +34,7 @@ pub fn status_response(state: &str) -> Info {
     bots: 0,
     server_type: ServerType::Dedicated,
     server_os: ServerOS::Linux,
-    visibility: true,
+    visibility: false,
     vac: false,
     the_ship: None,
     version: "".into(),
@@ -38,4 +58,94 @@ pub fn rules_response(description: &str) -> Vec<Rule> {
     Rule { name: "ServerVisibility".into(),            value: "2".into() },
     Rule { name: "SteamID".into(),                     value: "90151742714337280".into() },
   ]
+}
+
+pub async fn middleware(
+  receiver: &mut UnboundedReceiver<Vec<u8>>,
+  downstream_send: Arc<UdpSocket>,
+  downstream_addr: SocketAddr,
+  upstream_recv: Arc<UdpSocket>,
+  upstream_send: Arc<UdpSocket>,
+  scaler: Arc<ZeroScaler>,
+) -> bool {
+  let send_buf = match receiver.recv().await {
+    Some(send_buf) => send_buf,
+    None => return true,
+  };
+
+  let mut recv_buf = vec![0; 64 * 1024];
+
+  // log::info!("send_buf {}: {:?}", port, send_buf.hex_dump());
+
+  let send_fut = async {
+    upstream_send.send(&send_buf).await.context("Error sending to upstream")
+  };
+
+  let (control_flow, buf) = if send_buf.get(0..INFO_REQUEST.len()) == Some(&INFO_REQUEST) {
+    log::trace!("info");
+
+    let replicas = scaler.replica_status().await;
+    if replicas.wanted == 0 {
+      (true, status_response("idle").to_bytes())
+    } else {
+      let recv_fut = async {
+        upstream_recv.recv_from(&mut recv_buf).await.context("Error receiving from upstream")
+          .map(|(size, _)| recv_buf[..size].to_vec())
+      };
+
+      match send_fut.and_then(|_| recv_fut).await {
+        Ok(ok) => (false, ok),
+        Err(_) => (true, status_response("starting").to_bytes()),
+      }
+    }
+  } else if send_buf.get(0..RULES_REQUEST.len()) == Some(&RULES_REQUEST) {
+    log::trace!("rules");
+
+    let replicas = scaler.replica_status().await;
+    if replicas.wanted == 0 {
+      (
+        true,
+        Rule::vec_to_bytes(rules_response("Server is currently idle, connect to scale up."))
+      )
+    } else {
+      match upstream_recv.recv_from(&mut recv_buf).await {
+        Ok((size, _)) => {
+          use std::io::Cursor;
+          // let rules = Rule::from_cursor(Cursor::new(recv_buf[4..size].to_vec()));
+          // dbg!(rules);
+
+          (false, recv_buf[..size].to_vec())
+        },
+        Err(err) => (
+          true,
+          Rule::vec_to_bytes(rules_response(&format!("Server is starting, hang on. ({})", err)))
+        ),
+      }
+    }
+  } else {
+    if send_buf.get(0..LOGIN_REQUEST.len()) == Some(&LOGIN_REQUEST) {
+      log::trace!("login");
+    } else {
+      log::trace!("other");
+    }
+
+    let scale_up_fut = scale_up(scaler.as_ref());
+
+    let recv_fut = async move {
+      upstream_recv.recv_from(&mut recv_buf).await.context("Error receiving from upstream")
+        .map(|(size, _)| recv_buf[..size].to_vec())
+    };
+
+    // log::info!("recv_buf {}: {:?}", port, (&recv_buf[..size]).hex_dump());
+
+    match tokio::join!(send_fut.and_then(|_| recv_fut), scale_up_fut) {
+      (Ok(ok), ()) => (false, ok),
+      (Err(_), ()) => return true,
+    }
+  };
+
+  match downstream_send.send_to(&buf, downstream_addr).await.context("Error sending to downstream") {
+    Ok(_) => control_flow,
+    Err(_) => true,
+  }
 }

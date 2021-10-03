@@ -3,7 +3,7 @@ use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::{Arc, RwLock};
 
 use anyhow::Context;
-use pretty_hex::PrettyHex;
+use futures::TryFutureExt;
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc::{self, UnboundedSender, UnboundedReceiver};
 use tokio::time::{Instant, Duration, timeout};
@@ -17,14 +17,6 @@ async fn listener(port: u16) -> anyhow::Result<Arc<UdpSocket>> {
   log::info!("Listening on {}/udp.", downstream.local_addr()?);
   Ok(Arc::new(downstream))
 }
-
-const INFO_REQUEST: [u8; 25] = [
-  0xff, 0xff, 0xff, 0xff, 0x54, 0x53, 0x6f, 0x75, 0x72, 0x63, 0x65, 0x20, 0x45, 0x6e, 0x67, 0x69,
-  0x6e, 0x65, 0x20, 0x51, 0x75, 0x65, 0x72, 0x79, 0x00,
-];
-
-const RULES_REQUEST: [u8; 5] = [0xFF, 0xFF, 0xFF, 0xFF, 0x56];
-
 
 // Forward from downstream to upstream.
 async fn forwarder(
@@ -136,85 +128,43 @@ pub async fn udp_proxy(
       tokio::spawn(async move {
         let _defer_guard = register_connection(active_connections.clone(), downstream_addr);
 
-        let upstream = Arc::new(UdpSocket::bind((Ipv4Addr::new(0, 0, 0, 0), 0)).await?);
-        upstream.connect(&upstream_addr).await?;
+        let socket = UdpSocket::bind((Ipv4Addr::new(0, 0, 0, 0), 0)).and_then(|socket| async {
+          socket.connect(&upstream_addr).await?;
+          Ok(socket)
+        }).await;
 
+        let upstream = match socket {
+          Ok(socket) => Arc::new(socket),
+          Err(err) => {
+            log::error!("{}", err);
+            return
+          },
+        };
         let upstream_send = Arc::clone(&upstream);
         let upstream_recv = Arc::clone(&upstream);
 
-        let mut recv_buf = vec![0; 64 * 1024];
         match proxy_type.as_deref() {
           Some("7d2d") => {
-            loop {
-              let should_continue = timeout(timeout_duration, async {
-                if let Some(send_buf) = receiver.recv().await {
-                  let send_res = upstream_send.send(&send_buf).await.context("Error sending to upstream");
+            let middleware_res = timeout(
+              timeout_duration,
+              sdtd::middleware(
+                &mut receiver,
+                downstream_send.clone(),
+                downstream_addr,
+                upstream_recv.clone(),
+                upstream_send.clone(),
+                scaler.clone()
+              )
+            ).await;
 
-                  log::info!("send_buf {}: {:?}", port, send_buf.hex_dump());
-
-                  let (should_return, buf) = if send_buf.get(0..INFO_REQUEST.len()) == Some(&INFO_REQUEST) {
-                    log::trace!("INFO_REQUEST");
-                    let replicas = scaler.replica_status().await;
-                    if replicas.wanted == 0 {
-                      (true, sdtd::status_response("idle").to_bytes())
-                    } else {
-                      send_res?;
-                      match upstream_recv.recv_from(&mut recv_buf).await {
-                        Ok((size, _)) => (false, recv_buf[..size].to_vec()),
-                        Err(_) => (true, sdtd::status_response("starting").to_bytes()),
-                      }
-                    }
-                  } else {
-                    use a2s::rules::Rule;
-
-                    if send_buf.get(0..RULES_REQUEST.len()) == Some(&RULES_REQUEST) {
-                      log::trace!("RULES_REQUEST");
-                      let replicas = scaler.replica_status().await;
-                      if replicas.wanted == 0 {
-                        (true, Rule::vec_to_bytes(sdtd::rules_response("Server is currently idle, connect to scale up.")))
-                      } else {
-                        match upstream_recv.recv_from(&mut recv_buf).await {
-                          Ok((size, _)) => {
-                            use std::io::Cursor;
-                            let rules = Rule::from_cursor(Cursor::new(recv_buf[4..size].to_vec()));
-                            dbg!(rules);
-
-                            (false, recv_buf[..size].to_vec())
-                          },
-                          Err(err) => (true, Rule::vec_to_bytes(sdtd::rules_response(&format!("Server is starting, hang on. ({})", err)))),
-                        }
-                      }
-                    } else {
-                      log::trace!("OTHER_REQUEST");
-
-                      scale_up(scaler.as_ref()).await;
-
-                      let (size, _) = upstream_recv.recv_from(&mut recv_buf).await.context("Error receiving from upstream")?;
-                      log::info!("recv_buf {}: {:?}", port, (&recv_buf[..size]).hex_dump());
-                      (false, recv_buf[..size].to_vec())
-                    }
-                  };
-
-                  downstream_send.send_to(&buf, downstream_addr)
-                    .await.context("Error sending to downstream")?;
-
-
-                  Ok(should_return)
-                } else {
-                  Ok::<_, anyhow::Error>(true)
-                }
-              }).await?;
-
-              log::trace!("should_continue = {:?}", should_continue);
-              if !should_continue? {
-                break
-              }
+            if matches!(middleware_res, Ok(true) | Err(_)) {
+              return
             }
           },
           _ => scale_up(scaler.as_ref()).await,
         }
 
-        Ok::<_, anyhow::Error>(proxy(receiver, downstream_send, downstream_addr, upstream_recv, upstream_send, timeout_duration).await)
+        proxy(receiver, downstream_send, downstream_addr, upstream_recv, upstream_send, timeout_duration).await
       });
 
       sender
