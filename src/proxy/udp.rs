@@ -10,7 +10,7 @@ use tokio::time::{Instant, Duration, timeout};
 
 use crate::ZeroScaler;
 use super::{register_connection, scale_up};
-use crate::sd2d;
+use crate::sdtd;
 
 async fn listener(port: u16) -> anyhow::Result<Arc<UdpSocket>> {
   let downstream = UdpSocket::bind((Ipv4Addr::new(0, 0, 0, 0), port)).await?;
@@ -148,7 +148,7 @@ pub async fn udp_proxy(
             loop {
               let should_continue = timeout(timeout_duration, async {
                 if let Some(send_buf) = receiver.recv().await {
-                  upstream_send.send(&send_buf).await.context("Error sending to upstream")?;
+                  let send_res = upstream_send.send(&send_buf).await.context("Error sending to upstream");
 
                   log::info!("send_buf {}: {:?}", port, send_buf.hex_dump());
 
@@ -156,43 +156,43 @@ pub async fn udp_proxy(
                     log::trace!("INFO_REQUEST");
                     let replicas = scaler.replica_status().await;
                     if replicas.wanted == 0 {
-                      (true, sd2d::status_response("idle").to_bytes())
+                      (true, sdtd::status_response("idle").to_bytes())
                     } else {
+                      send_res?;
                       match upstream_recv.recv_from(&mut recv_buf).await {
                         Ok((size, _)) => (false, recv_buf[..size].to_vec()),
-                        Err(_) => (true, sd2d::status_response("starting").to_bytes()),
+                        Err(_) => (true, sdtd::status_response("starting").to_bytes()),
                       }
                     }
                   } else {
-                    let rules_request = send_buf.get(0..RULES_REQUEST.len()) == Some(&RULES_REQUEST);
+                    use a2s::rules::Rule;
 
-                    if rules_request {
+                    if send_buf.get(0..RULES_REQUEST.len()) == Some(&RULES_REQUEST) {
                       log::trace!("RULES_REQUEST");
-                    }
+                      let replicas = scaler.replica_status().await;
+                      if replicas.wanted == 0 {
+                        (true, Rule::vec_to_bytes(sdtd::rules_response("Server is currently idle, connect to scale up.")))
+                      } else {
+                        match upstream_recv.recv_from(&mut recv_buf).await {
+                          Ok((size, _)) => {
+                            use std::io::Cursor;
+                            let rules = Rule::from_cursor(Cursor::new(recv_buf[4..size].to_vec()));
+                            dbg!(rules);
 
-                    scale_up(scaler.as_ref()).await;
-
-                    let res = upstream_recv.recv_from(&mut recv_buf).await.context("Error receiving from upstream");
-
-                    if rules_request {
-                      dbg!(&res);
-                    }
-
-                    let (size, _) = res?;
-                    log::info!("recv_buf {}: {:?}", port, (&recv_buf[..size]).hex_dump());
-
-                    let con = if rules_request {
-                      use std::io::Cursor;
-                      let rules = a2s::rules::Rule::from_cursor(Cursor::new(recv_buf[4..size].to_vec()));
-                      dbg!(rules);
-
-                      true
+                            (false, recv_buf[..size].to_vec())
+                          },
+                          Err(err) => (true, Rule::vec_to_bytes(sdtd::rules_response(&format!("Server is starting, hang on. ({})", err)))),
+                        }
+                      }
                     } else {
-                      false
-                    };
+                      log::trace!("OTHER_REQUEST");
 
+                      scale_up(scaler.as_ref()).await;
 
-                    (con, recv_buf[..size].to_vec())
+                      let (size, _) = upstream_recv.recv_from(&mut recv_buf).await.context("Error receiving from upstream")?;
+                      log::info!("recv_buf {}: {:?}", port, (&recv_buf[..size]).hex_dump());
+                      (false, recv_buf[..size].to_vec())
+                    }
                   };
 
                   downstream_send.send_to(&buf, downstream_addr)

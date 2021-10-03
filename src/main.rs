@@ -8,7 +8,7 @@ use k8s_openapi::api::core::v1::Service;
 use tokio::time::{sleep, sleep_until, Duration, Instant};
 
 mod minecraft;
-pub mod sd2d;
+pub mod sdtd;
 mod zero_scaler;
 pub(crate) use zero_scaler::ZeroScaler;
 

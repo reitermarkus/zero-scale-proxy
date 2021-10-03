@@ -1,4 +1,5 @@
 use a2s::info::{Info, ServerType, ServerOS, ExtendedServerInfo};
+use a2s::rules::Rule;
 
 pub fn status_response(state: &str) -> Info {
   Info {
@@ -6,7 +7,7 @@ pub fn status_response(state: &str) -> Info {
     name: "7 Days to Die".into(),
     map: state.to_owned(),
     folder: "7DTD".into(),
-    game: "7 Days To Die".into(),
+    game: "7 Days to Die".into(),
     app_id: 0,
     players: 0,
     max_players: 0,
@@ -26,4 +27,15 @@ pub fn status_response(state: &str) -> Info {
     },
     source_tv: None,
   }
+}
+
+pub fn rules_response(description: &str) -> Vec<Rule> {
+  vec![
+    Rule { name: "GameHost".into(),                    value: "7 Days to Die".into() },
+    Rule { name: "GameName".into(),                    value: "World".into() },
+    Rule { name: "ServerDescription".into(),           value: description.to_owned() },
+    Rule { name: "ServerLoginConfirmationText".into(), value: "".into() },
+    Rule { name: "ServerVisibility".into(),            value: "2".into() },
+    Rule { name: "SteamID".into(),                     value: "90151742714337280".into() },
+  ]
 }
