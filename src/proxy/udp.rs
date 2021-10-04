@@ -26,19 +26,24 @@ async fn forwarder(
 ) -> anyhow::Result<()> {
   loop {
     let forward = async {
-      if let Some(send_buf) = downstream_recv.recv().await {
-        Some(upstream_send.send(&send_buf)
-          .await.context("Error sending to upstream"))
+      let send_buf = timeout(timeout_duration, downstream_recv.recv()).await
+        .context("Timed out receiving from downstream")?;
+
+      if let Some(send_buf) = send_buf {
+        timeout(timeout_duration, upstream_send.send(&send_buf)).await
+          .context("Timed out sending to upstream")?
+          .context("Error sending to upstream")?;
+
+        Ok(Some(()))
       } else {
-        None
+        Ok(None)
       }
     };
 
-    match timeout(timeout_duration, forward).await {
-      Ok(Some(Err(err))) => return Err(err),
+    match forward.await {
+      Ok(Some(())) => continue,
       Ok(None) => return Ok(()),
-      Ok(_) => (),
-      Err(_) => return Ok(()),
+      Err(err) => return Err(err),
     }
   }
 }
@@ -53,19 +58,20 @@ async fn backwarder(
   let mut recv_buf = vec![0; 64 * 1024];
   loop {
     let backward = async {
-      let (size, _) = upstream_recv.recv_from(&mut recv_buf)
-        .await.context("Error receiving from upstream")?;
+      let (size, _) = timeout(timeout_duration, upstream_recv.recv_from(&mut recv_buf)).await
+        .context("Timed out receiving from upstream")?
+        .context("Error receiving from upstream")?;
 
-      downstream_send.send_to(&recv_buf[..size], downstream_addr)
-        .await.context("Error sending to downstream")?;
+      timeout(timeout_duration, downstream_send.send_to(&recv_buf[..size], downstream_addr)).await
+        .context("Timed out sending to downstream")?
+        .context("Error sending to downstream")?;
 
-      Ok::<(), anyhow::Error>(())
+      Ok(())
     };
 
-    match timeout(timeout_duration, backward).await {
-      Ok(Err(err)) => return Err(err),
-      Ok(_) => (),
-      Err(_) => return Ok(()),
+    match backward.await {
+      Ok(()) => continue,
+      Err(err) => return Err(err),
     }
   }
 }

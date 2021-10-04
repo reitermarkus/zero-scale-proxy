@@ -130,7 +130,8 @@ async fn main() -> anyhow::Result<()> {
       Either::Left(proxy::tcp(ip, port, active_connections.clone(), scaler.as_ref(), proxy_type.clone()))
     },
     "udp" => {
-      Either::Right(proxy::udp(ip, port, active_connections.clone(), scaler.clone(), proxy_type.clone(), timeout))
+      let socket_timeout = Duration::from_secs(60);
+      Either::Right(proxy::udp(ip, port, active_connections.clone(), scaler.clone(), proxy_type.clone(), socket_timeout))
     },
     _ => unreachable!(),
   }));
