@@ -115,13 +115,14 @@ async fn main() -> anyhow::Result<()> {
               log::error!("Error scaling down: {}", err);
               continue
             }
-          } else {
-            log::debug!("Timeout not yet reached, next idle check in {} seconds.", (deadline - now).as_secs());
           }
         } else {
           log::debug!("{} connections are active, next idle check in {} seconds.", connection_count, timeout.as_secs());
-          timer = sleep(timeout);
         }
+
+        timer = sleep(timeout);
+      } else {
+        log::debug!("Timeout not yet reached, next idle check in {} seconds.", (deadline - now).as_secs());
       }
 
       timer.await;
