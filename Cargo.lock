@@ -5,7 +5,7 @@ version = 3
 [[package]]
 name = "a2s"
 version = "0.4.0"
-source = "git+https://github.com/reitermarkus/a2s-rs?branch=master#b9243b0f5f417d631c46cb085c2d5f914093fa0c"
+source = "git+https://github.com/reitermarkus/a2s-rs?branch=master#25ce257ff10f1bc163c39b19c5cebfbf06430eba"
 dependencies = [
  "byteorder",
  "bzip2",
@@ -620,12 +620,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "lru_time_cache"
-version = "0.11.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9106e1d747ffd48e6be5bb2d97fa706ed25b144fbee4d5c02eae110cd8d6badd"
-
-[[package]]
 name = "matches"
 version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -880,12 +874,6 @@ name = "ppv-lite86"
 version = "0.2.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ac74c624d6b2d21f425f752262f42188365d7b8ff1aff74c82e45136510a4857"
-
-[[package]]
-name = "pretty-hex"
-version = "0.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bc5c99d529f0d30937f6f4b8a86d988047327bb88d04d2c4afc356de74722131"
 
 [[package]]
 name = "proc-macro-hack"
@@ -1627,10 +1615,8 @@ dependencies = [
  "k8s-openapi",
  "kube",
  "log",
- "lru_time_cache",
  "minecraft-protocol",
  "minecraft-protocol-derive",
- "pretty-hex",
  "tokio",
  "tokio-stream",
 ]

@@ -5,7 +5,6 @@ use a2s::info::{Info, ServerType, ServerOS, ExtendedServerInfo};
 use a2s::rules::Rule;
 use anyhow::Context;
 use futures::TryFutureExt;
-use pretty_hex::PrettyHex;
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc::UnboundedReceiver;
 
@@ -75,8 +74,6 @@ pub async fn middleware(
 
   let mut recv_buf = vec![0; 64 * 1024];
 
-  // log::info!("send_buf {}: {:?}", port, send_buf.hex_dump());
-
   let send_fut = async {
     upstream_send.send(&send_buf).await.context("Error sending to upstream")
   };
@@ -135,8 +132,6 @@ pub async fn middleware(
       upstream_recv.recv_from(&mut recv_buf).await.context("Error receiving from upstream")
         .map(|(size, _)| recv_buf[..size].to_vec())
     };
-
-    // log::info!("recv_buf {}: {:?}", port, (&recv_buf[..size]).hex_dump());
 
     match tokio::join!(send_fut.and_then(|_| recv_fut), scale_up_fut) {
       (Ok(ok), ()) => (false, ok),
