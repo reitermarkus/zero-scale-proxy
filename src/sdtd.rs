@@ -94,7 +94,7 @@ pub async fn middleware(
       };
 
       match send_fut.and_then(|_| recv_fut).await {
-        Ok(ok) => (false, ok),
+        Ok(ok) => (true, ok),
         Err(_) => (true, status_response("starting").to_bytes()),
       }
     }
