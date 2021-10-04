@@ -94,8 +94,6 @@ async fn main() -> anyhow::Result<()> {
       let mut timer = sleep_until(deadline);
       let now = Instant::now();
       if deadline < now {
-        log::debug!("Connection count: {}", connection_count);
-
         if connection_count == 0 {
           let replicas = match scaler.replicas().await {
             Ok(replicas) => {
