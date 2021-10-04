@@ -106,13 +106,7 @@ pub async fn middleware(
       )
     } else {
       match upstream_recv.recv_from(&mut recv_buf).await {
-        Ok((size, _)) => {
-          use std::io::Cursor;
-          // let rules = Rule::from_cursor(Cursor::new(recv_buf[4..size].to_vec()));
-          // dbg!(rules);
-
-          (false, recv_buf[..size].to_vec())
-        },
+        Ok((size, _)) => (false, recv_buf[..size].to_vec()),
         Err(err) => (
           true,
           Rule::vec_to_bytes(rules_response(&format!("Server is starting, hang on. ({})", err)))
