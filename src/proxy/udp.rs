@@ -126,8 +126,6 @@ pub async fn udp_proxy(
       let (sender, mut receiver) = mpsc::unbounded_channel::<Vec<u8>>();
 
       tokio::spawn(async move {
-        let _defer_guard = register_connection(active_connections.clone(), downstream_addr);
-
         let socket = UdpSocket::bind((Ipv4Addr::new(0, 0, 0, 0), 0)).and_then(|socket| async {
           socket.connect(&upstream_addr).await?;
           Ok(socket)
@@ -164,6 +162,7 @@ pub async fn udp_proxy(
           _ => scale_up(scaler.as_ref()).await,
         }
 
+        let _defer_guard = register_connection(active_connections.clone(), downstream_addr);
         proxy(receiver, downstream_send, downstream_addr, upstream_recv, upstream_send, timeout_duration).await
       });
 
