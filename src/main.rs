@@ -117,12 +117,12 @@ async fn main() -> anyhow::Result<()> {
             }
           }
         } else {
-          log::debug!("{} connections are active, next idle check in {} seconds.", connection_count, timeout.as_secs());
+          log::info!("{} connections are active, next idle check in {} seconds.", connection_count, timeout.as_secs());
         }
 
         timer = sleep(timeout);
       } else {
-        log::debug!("Timeout not yet reached, next idle check in {} seconds.", (deadline - now).as_secs());
+        log::info!("Timeout not yet reached, next idle check in {} seconds.", (deadline - now).as_secs());
       }
 
       timer.await;
