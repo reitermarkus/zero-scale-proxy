@@ -89,7 +89,7 @@ async fn proxy(
       log::error!("Forwarder failed: {}", err);
     },
     res = backwarder(upstream_recv, downstream_send, downstream_addr, timeout_duration) => if let Err(err) = res {
-      log::error!("Backwarder failed: {:?}", err);
+      log::error!("Backwarder failed: {}", err);
     },
   }
 }

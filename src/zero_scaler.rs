@@ -44,7 +44,7 @@ impl ZeroScaler {
     let replicas = deployment_status.as_ref().and_then(|s| s.replicas).unwrap_or(0);
     let ready_replicas = deployment_status.as_ref().and_then(|s| s.ready_replicas).unwrap_or(0);
     let available_replicas = deployment_status.as_ref().and_then(|s| s.available_replicas).unwrap_or(0);
-    log::info!("{}/{} replicas ready, {}/{} available.", ready_replicas, replicas, available_replicas, replicas);
+    log::debug!("{}/{} replicas ready, {}/{} available.", ready_replicas, replicas, available_replicas, replicas);
 
     ReplicaStatus {
       ready: ready_replicas as usize,

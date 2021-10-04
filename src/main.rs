@@ -92,33 +92,36 @@ async fn main() -> anyhow::Result<()> {
       log::debug!("Checking if idle timeout is reached.");
       let deadline = last_update + timeout;
       let mut timer = sleep_until(deadline);
-      if deadline < Instant::now() {
+      let now = Instant::now();
+      if deadline < now {
         log::debug!("Connection count: {}", connection_count);
 
         if connection_count == 0 {
-          log::debug!("Checking replica count.");
           let replicas = match scaler.replicas().await {
-            Ok(replicas) => replicas,
+            Ok(replicas) => {
+              log::debug!("{} replicas are available.", replicas);
+              replicas
+            },
             Err(err) => {
               log::error!("Failed getting replica count: {}", err);
               continue
             }
           };
-          log::debug!("Replicas: {}", replicas);
 
           if replicas >= 1 {
-            log::info!("Reached idle timeout. Scaling down.");
+            log::info!("Reached idle timeout, scaling down.");
 
             if let Err(err) = scaler.scale_to(0).await {
               log::error!("Error scaling down: {}", err);
               continue
             }
+          } else {
+            log::debug!("Timeout not yet reached, next idle check in {} seconds.", (deadline - now).as_secs());
           }
         } else {
-          log::debug!("Idle timeout not yet reached. Next check in {} seconds.", timeout.as_secs());
+          log::debug!("{} connections are active, next idle check in {} seconds.", connection_count, timeout.as_secs());
+          timer = sleep(timeout);
         }
-
-        timer = sleep(timeout);
       }
 
       timer.await;
