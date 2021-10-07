@@ -118,6 +118,8 @@ pub async fn middleware(
       log::trace!("login");
     } else {
       log::trace!("other");
+
+      log::debug!("unknown message type: send_buf = {}", send_buf.hex_dump());
     }
 
     let scale_up_fut = scale_up(scaler.as_ref());
