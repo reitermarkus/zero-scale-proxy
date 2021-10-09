@@ -1,14 +1,17 @@
 use std::env;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc};
 
 use futures::future::Either;
 use futures::future::try_join_all;
 use kube::{Api, Client};
 use k8s_openapi::api::core::v1::Service;
-use tokio::time::{sleep, sleep_until, Duration, Instant};
+use tokio::time::Duration;
 
 mod zero_scaler;
 pub(crate) use zero_scaler::ZeroScaler;
+
+mod idle_checker;
+pub(crate) use idle_checker::IdleChecker;
 
 mod proxy;
 
@@ -79,69 +82,26 @@ async fn main() -> anyhow::Result<()> {
     log::info!("  {}:{}/{}", ip, port, protocol);
   }
 
-  let active_connections = Arc::new(RwLock::new((0, Instant::now())));
-
-  let idle_checker = async {
-    let active_connections = Arc::clone(&active_connections);
-
-    loop {
-      let (connection_count, last_update) = *active_connections.read().unwrap();
-
-      log::debug!("Checking if idle timeout is reached.");
-      let deadline = last_update + timeout;
-      let mut timer = sleep_until(deadline);
-      let now = Instant::now();
-      if deadline < now {
-        if connection_count == 0 {
-          let replicas = match scaler.replicas().await {
-            Ok(replicas) => {
-              log::debug!("{} replicas are available.", replicas);
-              replicas
-            },
-            Err(err) => {
-              log::error!("Failed getting replica count: {}", err);
-              continue
-            }
-          };
-
-          if replicas >= 1 {
-            log::info!("Reached idle timeout, scaling down.");
-            match scaler.scale_to(0).await {
-              Ok(_) => log::info!("Scaled down successfully."),
-              Err(err) => {
-                log::error!("Error scaling down: {}", err);
-                continue
-              }
-            }
-          }
-        } else {
-          log::info!("{} connections are active, next idle check in {} seconds.", connection_count, timeout.as_secs());
-        }
-
-        timer = sleep(timeout);
-      } else {
-        log::info!("Timeout not yet reached, next idle check in {} seconds.", (deadline - now).as_secs());
-      }
-
-      timer.await;
-    }
-  };
+  let idle_checker = Arc::new(IdleChecker::new(timeout));
 
   let proxies = try_join_all(upstreams.into_iter().map(|(ip, (port, protocol))| match protocol.as_ref() {
     "tcp" => {
-      Either::Left(proxy::tcp(ip, port, active_connections.clone(), scaler.as_ref(), proxy_type.clone()))
+      Either::Left(proxy::tcp(ip, port, idle_checker.clone(), scaler.as_ref(), proxy_type.clone()))
     },
     "udp" => {
       let socket_timeout = Duration::from_secs(60);
-      Either::Right(proxy::udp(ip, port, active_connections.clone(), scaler.clone(), proxy_type.clone(), socket_timeout))
+      Either::Right(proxy::udp(ip, port, idle_checker.clone(), scaler.clone(), proxy_type.clone(), socket_timeout))
     },
     _ => unreachable!(),
   }));
 
-  tokio::select! {
-    res = idle_checker => res,
-    res = proxies => res?,
-  };
+  let idle_checker = idle_checker.start(&scaler);
 
-  Ok(())
+  tokio::select! {
+    res = idle_checker => Ok(res),
+    res = proxies => {
+      res?;
+      Ok(())
+    },
+  }
 }

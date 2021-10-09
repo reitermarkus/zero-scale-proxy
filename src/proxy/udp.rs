@@ -1,15 +1,15 @@
 use std::collections::HashMap;
 use std::net::{Ipv4Addr, SocketAddr};
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
 use anyhow::Context;
 use futures::TryFutureExt;
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc::{self, UnboundedSender, UnboundedReceiver};
-use tokio::time::{Instant, Duration, timeout};
+use tokio::time::{Duration, timeout};
 
-use crate::ZeroScaler;
-use super::{middleware, register_connection, scale_up};
+use crate::{IdleChecker, ZeroScaler};
+use super::{middleware, scale_up};
 
 async fn listener(port: u16) -> anyhow::Result<Arc<UdpSocket>> {
   let downstream = UdpSocket::bind((Ipv4Addr::new(0, 0, 0, 0), port)).await?;
@@ -96,7 +96,7 @@ async fn proxy(
 pub async fn udp_proxy(
   host: impl AsRef<str>,
   port: u16,
-  active_connections: Arc<RwLock<(usize, Instant)>>,
+  idle_checker: Arc<IdleChecker>,
   scaler: Arc<ZeroScaler>,
   proxy_type: Option<String>,
   timeout_duration: Duration
@@ -125,7 +125,7 @@ pub async fn udp_proxy(
     let downstream_send = Arc::clone(&downstream_recv);
     let scaler = scaler.clone();
     let proxy_type = proxy_type.clone();
-    let active_connections = active_connections.clone();
+    let idle_checker = idle_checker.clone();
 
     let make_sender = || {
       let (sender, mut receiver) = mpsc::unbounded_channel::<Vec<u8>>();
@@ -167,7 +167,7 @@ pub async fn udp_proxy(
           _ => scale_up(scaler.as_ref()).await,
         }
 
-        let _defer_guard = register_connection(active_connections.clone(), downstream_addr);
+        let _defer_guard = idle_checker.register_connection(downstream_addr);
         proxy(receiver, downstream_send, downstream_addr, upstream_recv, upstream_send, timeout_duration).await
       });
 
