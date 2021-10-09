@@ -10,8 +10,7 @@ use tokio::time::Instant;
 use tokio_stream::wrappers::TcpListenerStream;
 
 use crate::ZeroScaler;
-use crate::minecraft;
-use super::{register_connection, scale_up};
+use super::{middleware, register_connection, scale_up};
 
 async fn proxy(mut downstream: TcpStream, mut upstream: TcpStream) -> io::Result<()> {
   let (bytes_sent, bytes_received) = io::copy_bidirectional(&mut downstream, &mut upstream).await?;
@@ -52,7 +51,7 @@ pub async fn tcp_proxy(host: impl AsRef<str>, port: u16, active_connections: Arc
         Some("minecraft") => {
           let minecraft_favicon = env::var("MINECRAFT_FAVICON").ok();
 
-          match minecraft::middleware(downstream, upstream, replicas.wanted, scaler, minecraft_favicon.as_deref()).await.context("Error in Minecraft middleware")? {
+          match middleware::minecraft::tcp(downstream, upstream, replicas.wanted, scaler, minecraft_favicon.as_deref()).await.context("Error in Minecraft middleware")? {
             Some((downstream, upstream)) => (downstream, upstream),
             None => return Ok(()),
           }

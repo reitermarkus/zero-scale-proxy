@@ -1,7 +1,5 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::ZeroScaler;
-
 use anyhow::anyhow;
 use minecraft_protocol::Decoder;
 use minecraft_protocol::Encoder;
@@ -17,8 +15,10 @@ use minecraft_protocol::status::ServerVersion;
 use minecraft_protocol::status::PingResponse;
 use minecraft_protocol::status::OnlinePlayers;
 use minecraft_protocol::status::ServerStatus;
-
 use tokio::net::TcpStream;
+
+use crate::ZeroScaler;
+use super::scale_up;
 
 fn proxy_packet(source: &mut std::net::TcpStream, destination: &mut std::net::TcpStream) -> anyhow::Result<Packet> {
   log::trace!("proxy_packet");
@@ -87,7 +87,7 @@ fn login_response() -> Packet {
   }
 }
 
-pub async fn middleware(downstream: TcpStream, upstream: Option<TcpStream>, replicas: usize, scaler: &ZeroScaler, favicon: Option<&str>) -> anyhow::Result<Option<(TcpStream, Option<TcpStream>)>> {
+pub async fn tcp(downstream: TcpStream, upstream: Option<TcpStream>, replicas: usize, scaler: &ZeroScaler, favicon: Option<&str>) -> anyhow::Result<Option<(TcpStream, Option<TcpStream>)>> {
   let mut downstream_std = downstream.into_std()?;
   downstream_std.set_nonblocking(false)?;
 
@@ -157,16 +157,13 @@ pub async fn middleware(downstream: TcpStream, upstream: Option<TcpStream>, repl
           log::trace!("login");
 
           if upstream_std.is_none() {
-            log::info!("Received login request, scaling up.");
-            let scaling = scaler.scale_to(1);
+            let scaling = scale_up(scaler);
 
             login_response()
               .encode(&mut downstream_std)
               .map_err(|e| anyhow!("Error sending login response: {:?}", e))?;
 
-            if let Err(err) = scaling.await {
-              log::error!("Scaling failed: {}", err);
-            }
+            scaling.await;
           }
 
           break

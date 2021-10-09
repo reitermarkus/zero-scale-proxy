@@ -55,7 +55,6 @@ impl ZeroScaler {
 
   pub async fn scale_to(&self, replicas: i32) -> Result<(), kube::Error> {
     let patch_params = PatchParams {
-      // dry_run: true,
       force: true,
       field_manager: Some("zero-scale-proxy".into()),
       ..Default::default()
@@ -74,10 +73,10 @@ impl ZeroScaler {
 
     let mut stream = self.deployments().await?.watch(&lp, "0").await?.boxed();
 
-    while let Ok(Some(status)) = stream.try_next().await {
+    while let Some(status) = stream.try_next().await? {
       match status {
         WatchEvent::Added(s) | WatchEvent::Modified(s) => {
-          if s.status.and_then(|s| s.available_replicas).unwrap_or(0) == replicas {
+          if s.status.and_then(|s| s.ready_replicas).unwrap_or(0) == replicas {
             break
           }
         },

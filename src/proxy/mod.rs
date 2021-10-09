@@ -6,6 +6,8 @@ use tokio::time::Instant;
 
 use crate::ZeroScaler;
 
+pub mod middleware;
+
 mod tcp;
 pub use tcp::tcp_proxy as tcp;
 
@@ -13,6 +15,8 @@ mod udp;
 pub use udp::udp_proxy as udp;
 
 pub fn register_connection(active_connections: Arc<RwLock<(usize, Instant)>>, peer_addr: SocketAddr) -> impl Drop {
+  log::trace!("register_connection");
+
   {
     let (ref mut connection_count, ref mut last_update) = *active_connections.write().unwrap();
     *connection_count += 1;
@@ -28,8 +32,13 @@ pub fn register_connection(active_connections: Arc<RwLock<(usize, Instant)>>, pe
 }
 
 pub async fn scale_up(scaler: &ZeroScaler) {
+  log::trace!("scale_up");
+
   if scaler.replicas().await.map(|r| r == 0).unwrap_or(false) {
     log::info!("Received request, scaling up.");
-    let _ = scaler.scale_to(1).await;
+    match scaler.scale_to(1).await {
+      Ok(_) => log::info!("Scaling successful."),
+      Err(err) => log::error!("Error scaling up: {}", err),
+    }
   }
 }
