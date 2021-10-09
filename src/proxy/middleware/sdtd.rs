@@ -60,7 +60,7 @@ pub fn rules_response(description: &str) -> Vec<Rule> {
   ]
 }
 
-pub async fn middleware(
+pub async fn udp(
   receiver: &mut UnboundedReceiver<Vec<u8>>,
   downstream_send: Arc<UdpSocket>,
   downstream_addr: SocketAddr,

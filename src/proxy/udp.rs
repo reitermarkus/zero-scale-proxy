@@ -9,8 +9,7 @@ use tokio::sync::mpsc::{self, UnboundedSender, UnboundedReceiver};
 use tokio::time::{Instant, Duration, timeout};
 
 use crate::ZeroScaler;
-use super::{register_connection, scale_up};
-use crate::sdtd;
+use super::{middleware, register_connection, scale_up};
 
 async fn listener(port: u16) -> anyhow::Result<Arc<UdpSocket>> {
   let downstream = UdpSocket::bind((Ipv4Addr::new(0, 0, 0, 0), port)).await?;
@@ -151,7 +150,7 @@ pub async fn udp_proxy(
           Some("7d2d") => {
             let middleware_res = timeout(
               timeout_duration,
-              sdtd::middleware(
+              middleware::sdtd::udp(
                 &mut receiver,
                 downstream_send.clone(),
                 downstream_addr,
