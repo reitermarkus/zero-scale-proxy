@@ -7,6 +7,7 @@ use anyhow::Context;
 use futures::TryFutureExt;
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc::UnboundedReceiver;
+use pretty_hex::PrettyHex;
 
 use crate::ZeroScaler;
 use crate::proxy::scale_up;

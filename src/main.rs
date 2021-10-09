@@ -25,7 +25,7 @@ async fn main() -> anyhow::Result<()> {
   );
   let proxy_type = env::var("PROXY_TYPE").ok();
 
-  let upstreams: Vec<(String, (u16, String))> = if let Some((ip, ports)) = env::var("UPSTREAM_IP").ok().zip(env::var("PORTS").ok()) {
+  let upstreams: Vec<(String, (u16, String))> = if let Some((ip, ports)) = env::var("UPSTREAM_HOST").ok().zip(env::var("UPSTREAM_PORT").ok()) {
     let ports = ports.split(',').flat_map(|port| {
       if let Some((port, protocol)) = port.split_once("/") {
         vec![
