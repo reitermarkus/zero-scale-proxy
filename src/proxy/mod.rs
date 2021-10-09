@@ -37,7 +37,7 @@ pub async fn scale_up(scaler: &ZeroScaler) {
   if scaler.replicas().await.map(|r| r == 0).unwrap_or(false) {
     log::info!("Received request, scaling up.");
     match scaler.scale_to(1).await {
-      Ok(_) => log::info!("Scaling successful."),
+      Ok(_) => log::info!("Scaled up successfully."),
       Err(err) => log::error!("Error scaling up: {}", err),
     }
   }

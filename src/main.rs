@@ -107,10 +107,12 @@ async fn main() -> anyhow::Result<()> {
 
           if replicas >= 1 {
             log::info!("Reached idle timeout, scaling down.");
-
-            if let Err(err) = scaler.scale_to(0).await {
-              log::error!("Error scaling down: {}", err);
-              continue
+            match scaler.scale_to(0).await {
+              Ok(_) => log::info!("Scaled down successfully."),
+              Err(err) => {
+                log::error!("Error scaling down: {}", err);
+                continue
+              }
             }
           }
         } else {
