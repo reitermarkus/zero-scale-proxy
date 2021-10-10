@@ -33,8 +33,6 @@ pub async fn tcp_proxy(host: impl AsRef<str>, port: u16, scaler: &ZeroScaler, pr
 
     let proxy = || async {
       let peer_addr = downstream.peer_addr()?;
-      let active_connection = scaler.register_connection(peer_addr);
-
       let replicas = scaler.replica_status().await;
 
       let upstream = if replicas.available > 0 {
@@ -43,18 +41,20 @@ pub async fn tcp_proxy(host: impl AsRef<str>, port: u16, scaler: &ZeroScaler, pr
         None
       };
 
-      let (downstream, mut upstream) = match proxy_type.as_deref() {
+      let (downstream, mut upstream, active_connection) = match proxy_type.as_deref() {
         Some("minecraft") => {
           let minecraft_favicon = env::var("MINECRAFT_FAVICON").ok();
 
           match middleware::minecraft::tcp(downstream, upstream, replicas.wanted, scaler, minecraft_favicon.as_deref()).await.context("Error in Minecraft middleware")? {
-            Some((downstream, upstream)) => (downstream, upstream),
+            Some((downstream, upstream, active_connection)) => {
+              (downstream, upstream, active_connection)
+            },
             None => return Ok(()),
           }
         },
         _ => {
-          scaler.scale_up().await;
-          (downstream, upstream)
+          let active_connection = scaler.register_connection(peer_addr).await;
+          (downstream, upstream, Some(active_connection))
         }
       };
 

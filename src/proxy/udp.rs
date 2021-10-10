@@ -158,21 +158,16 @@ pub async fn udp_proxy(
               )
             ).await;
 
-            if matches!(middleware_res, Ok(true) | Err(_)) {
-              return
+            match middleware_res {
+              Ok((true, _)) | Err(_) => return,
+              Ok((false, active_connection)) => active_connection,
             }
-
-            scaler.register_connection(downstream_addr)
           },
           Some("teamspeak") => {
-            let connection = scaler.register_connection(downstream_addr);
-            scaler.scale_up().await;
-            connection
+            Some(scaler.register_connection(downstream_addr).await)
           },
           _ => {
-            let connection = scaler.register_connection(downstream_addr);
-            scaler.scale_up().await;
-            connection
+            Some(scaler.register_connection(downstream_addr).await)
           },
         };
 

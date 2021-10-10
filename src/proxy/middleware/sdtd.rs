@@ -9,7 +9,7 @@ use tokio::net::UdpSocket;
 use tokio::sync::mpsc::UnboundedReceiver;
 use pretty_hex::PrettyHex;
 
-use crate::ZeroScaler;
+use crate::{ZeroScaler, ActiveConnection};
 
 const INFO_REQUEST: [u8; 25] = [
   0xff, 0xff, 0xff, 0xff, 0x54, 0x53, 0x6f, 0x75, 0x72, 0x63, 0x65, 0x20, 0x45, 0x6e, 0x67, 0x69,
@@ -66,10 +66,10 @@ pub async fn udp(
   upstream_recv: Arc<UdpSocket>,
   upstream_send: Arc<UdpSocket>,
   scaler: Arc<ZeroScaler>,
-) -> bool {
+) -> (bool, Option<ActiveConnection>) {
   let send_buf = match receiver.recv().await {
     Some(send_buf) => send_buf,
-    None => return true,
+    None => return (true, None),
   };
 
   let mut recv_buf = vec![0; 64 * 1024];
@@ -78,12 +78,12 @@ pub async fn udp(
     upstream_send.send(&send_buf).await.context("Error sending to upstream")
   };
 
-  let (control_flow, buf) = if send_buf.get(0..INFO_REQUEST.len()) == Some(&INFO_REQUEST) {
+  let (control_flow, active_connection, buf) = if send_buf.get(0..INFO_REQUEST.len()) == Some(&INFO_REQUEST) {
     log::trace!("info");
 
     let replicas = scaler.replica_status().await;
     if replicas.wanted == 0 {
-      (true, status_response("idle").to_bytes())
+      (true, None, status_response("idle").to_bytes())
     } else {
       let recv_fut = async {
         upstream_recv.recv_from(&mut recv_buf).await.context("Error receiving from upstream")
@@ -91,8 +91,8 @@ pub async fn udp(
       };
 
       match send_fut.and_then(|_| recv_fut).await {
-        Ok(ok) => (true, ok),
-        Err(_) => (true, status_response("starting").to_bytes()),
+        Ok(ok) => (true, None, ok),
+        Err(_) => (true, None, status_response("starting").to_bytes()),
       }
     }
   } else if send_buf.get(0..RULES_REQUEST.len()) == Some(&RULES_REQUEST) {
@@ -102,13 +102,15 @@ pub async fn udp(
     if replicas.wanted == 0 {
       (
         true,
+        None,
         Rule::vec_to_bytes(rules_response("Server is currently idle, connect to scale up."))
       )
     } else {
       match upstream_recv.recv_from(&mut recv_buf).await {
-        Ok((size, _)) => (false, recv_buf[..size].to_vec()),
+        Ok((size, _)) => (false, None, recv_buf[..size].to_vec()),
         Err(err) => (
           true,
+          None,
           Rule::vec_to_bytes(rules_response(&format!("Server is starting, hang on. ({})", err)))
         ),
       }
@@ -122,21 +124,21 @@ pub async fn udp(
       log::debug!("unknown message type: send_buf = {:?}", send_buf.hex_dump());
     }
 
-    let scale_up_fut = scaler.scale_up();
+    let register_fut = scaler.register_connection(downstream_addr);
 
     let recv_fut = async move {
       upstream_recv.recv_from(&mut recv_buf).await.context("Error receiving from upstream")
         .map(|(size, _)| recv_buf[..size].to_vec())
     };
 
-    match tokio::join!(send_fut.and_then(|_| recv_fut), scale_up_fut) {
-      (Ok(ok), ()) => (false, ok),
-      (Err(_), ()) => return true,
+    match tokio::join!(send_fut.and_then(|_| recv_fut), register_fut) {
+      (Ok(buf), active_connection) => (false, Some(active_connection), buf),
+      (Err(_), _) => return (true, None),
     }
   };
 
   match downstream_send.send_to(&buf, downstream_addr).await.context("Error sending to downstream") {
-    Ok(_) => control_flow,
-    Err(_) => true,
+    Ok(_) => (control_flow, active_connection),
+    Err(_) => (true, None),
   }
 }

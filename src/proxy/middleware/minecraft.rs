@@ -1,6 +1,7 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::anyhow;
+use futures::future::{self, Either};
 use minecraft_protocol::Decoder;
 use minecraft_protocol::Encoder;
 use minecraft_protocol::chat::Payload;
@@ -17,7 +18,7 @@ use minecraft_protocol::status::OnlinePlayers;
 use minecraft_protocol::status::ServerStatus;
 use tokio::net::TcpStream;
 
-use crate::ZeroScaler;
+use crate::{ZeroScaler, ActiveConnection};
 
 fn proxy_packet(source: &mut std::net::TcpStream, destination: &mut std::net::TcpStream) -> anyhow::Result<Packet> {
   log::trace!("proxy_packet");
@@ -86,7 +87,9 @@ fn login_response() -> Packet {
   }
 }
 
-pub async fn tcp(downstream: TcpStream, upstream: Option<TcpStream>, replicas: usize, scaler: &ZeroScaler, favicon: Option<&str>) -> anyhow::Result<Option<(TcpStream, Option<TcpStream>)>> {
+pub async fn tcp(downstream: TcpStream, upstream: Option<TcpStream>, replicas: usize, scaler: &ZeroScaler, favicon: Option<&str>) -> anyhow::Result<Option<(TcpStream, Option<TcpStream>, Option<ActiveConnection>)>> {
+  let downstream_addr = downstream.peer_addr()?;
+
   let mut downstream_std = downstream.into_std()?;
   downstream_std.set_nonblocking(false)?;
 
@@ -98,6 +101,7 @@ pub async fn tcp(downstream: TcpStream, upstream: Option<TcpStream>, replicas: u
     None
   };
 
+  let mut active_connection = None;
   let mut state = 0;
   loop {
     log::trace!("middleware loop");
@@ -155,16 +159,22 @@ pub async fn tcp(downstream: TcpStream, upstream: Option<TcpStream>, replicas: u
         LoginServerBoundPacket::LoginStart(_) => {
           log::trace!("login");
 
-          if upstream_std.is_none() {
-            let scaling = scaler.scale_up();
+          let register_fut = scaler.register_connection(downstream_addr);
 
-            login_response()
-              .encode(&mut downstream_std)
-              .map_err(|e| anyhow!("Error sending login response: {:?}", e))?;
+          let response_fut = if upstream_std.is_none() {
+            Either::Left(async {
+              login_response()
+                .encode(&mut downstream_std)
+                .map_err(|e| anyhow!("Error sending login response: {:?}", e))
+            })
+          } else {
+            Either::Right(future::ok(()))
+          };
 
-            scaling.await;
-          }
+          let (connection, res) = tokio::join!(register_fut, response_fut);
+          res?;
 
+          active_connection = Some(connection);
           break
         },
         _ => break,
@@ -176,12 +186,12 @@ pub async fn tcp(downstream: TcpStream, upstream: Option<TcpStream>, replicas: u
   downstream_std.set_nonblocking(true)?;
   let downstream = TcpStream::from_std(downstream_std)?;
 
-  let upstream = if let Some(upstream_std) = upstream_std.take() {
+  let upstream = if let Some(upstream_std) = upstream_std {
     upstream_std.set_nonblocking(true)?;
     Some(TcpStream::from_std(upstream_std)?)
   } else {
     None
   };
 
-  Ok(Some((downstream, upstream)))
+  Ok(Some((downstream, upstream, active_connection)))
 }

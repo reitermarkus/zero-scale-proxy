@@ -8,7 +8,7 @@ use k8s_openapi::api::core::v1::Service;
 use tokio::time::Duration;
 
 mod zero_scaler;
-pub(crate) use zero_scaler::ZeroScaler;
+pub(crate) use zero_scaler::{ZeroScaler, ActiveConnection};
 
 mod idle_checker;
 pub(crate) use idle_checker::IdleChecker;

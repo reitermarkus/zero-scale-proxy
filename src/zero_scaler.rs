@@ -160,7 +160,7 @@ impl ZeroScaler {
     Ok(())
   }
 
-  pub async fn scale_up(&self) {
+  async fn scale_up(&self) {
     log::trace!("scale_up");
 
     if self.replicas().await.map(|r| r == 0).unwrap_or(false) {
@@ -172,9 +172,13 @@ impl ZeroScaler {
     }
   }
 
-  pub fn register_connection(&self, peer_addr: SocketAddr) -> ActiveConnection {
+  pub async fn register_connection(&self, peer_addr: SocketAddr) -> ActiveConnection {
     log::trace!("register_connection");
 
-    self.active_connections.register(peer_addr)
+    let active_connection = self.active_connections.register(peer_addr);
+
+    self.scale_up().await;
+
+    active_connection
   }
 }
