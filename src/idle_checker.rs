@@ -1,39 +1,36 @@
-use std::sync::{Arc, RwLock};
-use std::net::SocketAddr;
-
-use defer::defer;
-use tokio::time::{Duration, Instant, sleep, sleep_until};
+use tokio::time::{Duration, sleep};
 
 use crate::ZeroScaler;
 
 #[derive(Debug)]
 pub struct IdleChecker {
   timeout: Duration,
-  active_connections: Arc<RwLock<(usize, Instant)>>,
 }
 
 impl IdleChecker {
   pub fn new(timeout: Duration) -> Self {
     Self {
       timeout,
-      active_connections: Arc::new(RwLock::new((0, Instant::now()))),
     }
   }
 
   pub async fn start(&self, scaler: &ZeroScaler) {
+    // Don't run first check immediately.
+    sleep(self.timeout).await;
+
     loop {
       self.check(scaler).await;
     }
   }
 
   pub async fn check(&self, scaler: &ZeroScaler) {
-    let (connection_count, last_update) = *self.active_connections.read().unwrap();
-
+    log::trace!("check");
     log::debug!("Checking if idle timeout is reached.");
-    let deadline = last_update + self.timeout;
-    let mut timer = sleep_until(deadline);
-    let now = Instant::now();
-    if deadline < now {
+
+    let elapsed = scaler.active_connections.duration_since_last_update();
+    let mut timeout = self.timeout;
+    if elapsed > timeout {
+      let connection_count = scaler.active_connections.count();
       if connection_count == 0 {
         match scaler.replicas().await {
           Ok(replicas) => {
@@ -54,34 +51,23 @@ impl IdleChecker {
           }
         }
       } else {
-        log::info!("{} connections are active, next idle check in {} seconds.", connection_count, self.timeout.as_secs());
+        let connection_plural = if connection_count == 1 {
+          "connection is"
+        } else {
+          "connections are"
+        };
+
+        log::info!(
+          "{} {} active, next idle check in {} seconds.",
+          connection_count, connection_plural,
+          timeout.as_secs()
+        );
       }
-
-      timer = sleep(self.timeout);
     } else {
-      log::info!("Timeout not yet reached, next idle check in {} seconds.", (deadline - now).as_secs());
+      timeout -= elapsed;
+      log::info!("Timeout not yet reached, next idle check in {} seconds.", timeout.as_secs());
     }
 
-    timer.await
-  }
-
-  pub fn register_connection(&self, peer_addr: SocketAddr) -> impl Drop {
-    log::trace!("register_connection");
-
-    let active_connections = self.active_connections.clone();
-
-    {
-      let (ref mut connection_count, ref mut last_update) = *active_connections.write().unwrap();
-      *connection_count += 1;
-      log::info!("Peer {} connected, {} connections active.", peer_addr, connection_count);
-      *last_update = Instant::now();
-    }
-
-    defer(move || {
-      let (ref mut connection_count, ref mut last_update) = *active_connections.write().unwrap();
-      *connection_count -= 1;
-      log::info!("Peer {} disconnected, {} connections active.", peer_addr, connection_count);
-      *last_update = Instant::now();
-    })
+    sleep(timeout).await
   }
 }

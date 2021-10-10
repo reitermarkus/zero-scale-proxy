@@ -18,7 +18,6 @@ use minecraft_protocol::status::ServerStatus;
 use tokio::net::TcpStream;
 
 use crate::ZeroScaler;
-use super::scale_up;
 
 fn proxy_packet(source: &mut std::net::TcpStream, destination: &mut std::net::TcpStream) -> anyhow::Result<Packet> {
   log::trace!("proxy_packet");
@@ -157,7 +156,7 @@ pub async fn tcp(downstream: TcpStream, upstream: Option<TcpStream>, replicas: u
           log::trace!("login");
 
           if upstream_std.is_none() {
-            let scaling = scale_up(scaler);
+            let scaling = scaler.scale_up();
 
             login_response()
               .encode(&mut downstream_std)

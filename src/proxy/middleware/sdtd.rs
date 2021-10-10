@@ -10,7 +10,6 @@ use tokio::sync::mpsc::UnboundedReceiver;
 use pretty_hex::PrettyHex;
 
 use crate::ZeroScaler;
-use crate::proxy::scale_up;
 
 const INFO_REQUEST: [u8; 25] = [
   0xff, 0xff, 0xff, 0xff, 0x54, 0x53, 0x6f, 0x75, 0x72, 0x63, 0x65, 0x20, 0x45, 0x6e, 0x67, 0x69,
@@ -123,7 +122,7 @@ pub async fn udp(
       log::debug!("unknown message type: send_buf = {:?}", send_buf.hex_dump());
     }
 
-    let scale_up_fut = scale_up(scaler.as_ref());
+    let scale_up_fut = scaler.scale_up();
 
     let recv_fut = async move {
       upstream_recv.recv_from(&mut recv_buf).await.context("Error receiving from upstream")

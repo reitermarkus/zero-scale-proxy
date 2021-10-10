@@ -8,8 +8,8 @@ use tokio::net::UdpSocket;
 use tokio::sync::mpsc::{self, UnboundedSender, UnboundedReceiver};
 use tokio::time::{Duration, timeout};
 
-use crate::{IdleChecker, ZeroScaler};
-use super::{middleware, scale_up};
+use crate::ZeroScaler;
+use super::middleware;
 
 async fn listener(port: u16) -> anyhow::Result<Arc<UdpSocket>> {
   let downstream = UdpSocket::bind((Ipv4Addr::new(0, 0, 0, 0), port)).await?;
@@ -96,7 +96,6 @@ async fn proxy(
 pub async fn udp_proxy(
   host: impl AsRef<str>,
   port: u16,
-  idle_checker: Arc<IdleChecker>,
   scaler: Arc<ZeroScaler>,
   proxy_type: Option<String>,
   timeout_duration: Duration
@@ -125,7 +124,6 @@ pub async fn udp_proxy(
     let downstream_send = Arc::clone(&downstream_recv);
     let scaler = scaler.clone();
     let proxy_type = proxy_type.clone();
-    let idle_checker = idle_checker.clone();
 
     let make_sender = || {
       let (sender, mut receiver) = mpsc::unbounded_channel::<Vec<u8>>();
@@ -146,7 +144,7 @@ pub async fn udp_proxy(
         let upstream_send = Arc::clone(&upstream);
         let upstream_recv = Arc::clone(&upstream);
 
-        match proxy_type.as_deref() {
+        let active_connection = match proxy_type.as_deref() {
           Some("7d2d") => {
             let middleware_res = timeout(
               timeout_duration,
@@ -163,12 +161,23 @@ pub async fn udp_proxy(
             if matches!(middleware_res, Ok(true) | Err(_)) {
               return
             }
-          },
-          _ => scale_up(scaler.as_ref()).await,
-        }
 
-        let _defer_guard = idle_checker.register_connection(downstream_addr);
-        proxy(receiver, downstream_send, downstream_addr, upstream_recv, upstream_send, timeout_duration).await
+            scaler.register_connection(downstream_addr)
+          },
+          Some("teamspeak") => {
+            let connection = scaler.register_connection(downstream_addr);
+            scaler.scale_up().await;
+            connection
+          },
+          _ => {
+            let connection = scaler.register_connection(downstream_addr);
+            scaler.scale_up().await;
+            connection
+          },
+        };
+
+        proxy(receiver, downstream_send, downstream_addr, upstream_recv, upstream_send, timeout_duration).await;
+        drop(active_connection)
       });
 
       sender

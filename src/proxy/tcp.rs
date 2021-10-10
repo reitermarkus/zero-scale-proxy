@@ -1,5 +1,4 @@
 use std::env;
-use std::sync::Arc;
 use std::net::Ipv4Addr;
 
 use anyhow::Context;
@@ -8,8 +7,8 @@ use tokio::io;
 use tokio::net::{TcpListener, TcpStream};
 use tokio_stream::wrappers::TcpListenerStream;
 
-use crate::{IdleChecker, ZeroScaler};
-use super::{middleware, scale_up};
+use crate::ZeroScaler;
+use super::middleware;
 
 async fn proxy(mut downstream: TcpStream, mut upstream: TcpStream) -> io::Result<()> {
   let (bytes_sent, bytes_received) = io::copy_bidirectional(&mut downstream, &mut upstream).await?;
@@ -23,7 +22,7 @@ async fn listener_stream(port: u16) -> anyhow::Result<TcpListenerStream> {
   Ok(TcpListenerStream::new(listener))
 }
 
-pub async fn tcp_proxy(host: impl AsRef<str>, port: u16, idle_checker: Arc<IdleChecker>, scaler: &ZeroScaler, proxy_type: Option<String>) -> anyhow::Result<()> {
+pub async fn tcp_proxy(host: impl AsRef<str>, port: u16, scaler: &ZeroScaler, proxy_type: Option<String>) -> anyhow::Result<()> {
   let listener_stream = listener_stream(port).await?;
 
   listener_stream.err_into::<anyhow::Error>().try_for_each_concurrent(None, |downstream| async {
@@ -34,7 +33,7 @@ pub async fn tcp_proxy(host: impl AsRef<str>, port: u16, idle_checker: Arc<IdleC
 
     let proxy = || async {
       let peer_addr = downstream.peer_addr()?;
-      let _defer_guard = idle_checker.register_connection(peer_addr);
+      let active_connection = scaler.register_connection(peer_addr);
 
       let replicas = scaler.replica_status().await;
 
@@ -54,7 +53,7 @@ pub async fn tcp_proxy(host: impl AsRef<str>, port: u16, idle_checker: Arc<IdleC
           }
         },
         _ => {
-          scale_up(scaler).await;
+          scaler.scale_up().await;
           (downstream, upstream)
         }
       };
@@ -66,6 +65,7 @@ pub async fn tcp_proxy(host: impl AsRef<str>, port: u16, idle_checker: Arc<IdleC
       };
 
       proxy(downstream, upstream).await.context("Proxy error")?;
+      drop(active_connection);
 
       Ok::<(), anyhow::Error>(())
     };
