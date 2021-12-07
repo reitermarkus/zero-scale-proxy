@@ -15,40 +15,26 @@ pub(crate) use idle_checker::IdleChecker;
 
 mod proxy;
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
-  env_logger::init();
-
-  let deployment: String = env::var("DEPLOYMENT").expect("DEPLOYMENT is not set");
-  let namespace: String = env::var("NAMESPACE").expect("NAMESPACE is not set");
-  let timeout: Duration = Duration::from_secs(
-    env::var("TIMEOUT").map(|t| t.parse::<u64>().expect("TIMEOUT is not a number")).unwrap_or(600)
-  );
-  let proxy_type = env::var("PROXY_TYPE").ok();
-
-  let upstreams: Vec<(String, (u16, String))> = if let Some((ip, ports)) = env::var("UPSTREAM_HOST").ok().zip(env::var("UPSTREAM_PORT").ok()) {
-    let ports = ports.split(',').flat_map(|port| {
+fn parse_port(port: &str) -> (u16, String) {
       if let Some((port, protocol)) = port.split_once("/") {
-        vec![
-          (port.parse::<u16>().unwrap(), protocol.to_owned()),
-        ].into_iter()
+    (port.parse::<u16>().unwrap(), protocol.to_owned())
       } else {
-        vec![
-          (port.parse::<u16>().unwrap(), "tcp".into()),
-          (port.parse::<u16>().unwrap(), "udp".into()),
-        ].into_iter()
+    (port.parse::<u16>().unwrap(), "tcp".into())
       }
-    });
+}
+
+async fn detect_upstreams(upstream_ip: Option<String>, ports: Option<String>, service: Option<String>, namespace: &str) -> Result<Vec<(String, (u16, String))>, kube::Error> {
+  let upstreams = if let Some((ip, ports)) = upstream_ip.zip(ports) {
+    let ports = ports.split(',').map(parse_port);
 
     ports.map(|port| (ip.clone(), port)).collect()
   } else {
-    let service: String = env::var("SERVICE").expect("SERVICE is not set");
+    let service: String = service.expect("SERVICE is not set");
 
     let services: Vec<Service> = try_join_all(service.split(',').map(|service| {
-      let namespace = namespace.clone();
       async move {
         let client = Client::try_default().await?;
-        let services: Api<Service> = Api::namespaced(client, &namespace);
+        let services: Api<Service> = Api::namespaced(client, namespace);
         services.get(service).await
       }
     }).collect::<Vec<_>>()).await?;
@@ -71,6 +57,26 @@ async fn main() -> anyhow::Result<()> {
       ports.into_iter().map(move |port| (ip.clone(), port))
     }).collect()
   };
+
+  Ok(upstreams)
+}
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+  env_logger::init();
+
+  let deployment: String = env::var("DEPLOYMENT").expect("DEPLOYMENT is not set");
+  let namespace: String = env::var("NAMESPACE").expect("NAMESPACE is not set");
+  let timeout: Duration = Duration::from_secs(
+    env::var("TIMEOUT").map(|t| t.parse::<u64>().expect("TIMEOUT is not a number")).unwrap_or(600)
+  );
+  let proxy_type = env::var("PROXY_TYPE").ok();
+
+  let upstream_ip = env::var("UPSTREAM_IP").ok();
+  let ports = env::var("PORTS").ok();
+  let service = env::var("SERVICE").ok();
+
+  let upstreams: Vec<(String, (u16, String))> = detect_upstreams(upstream_ip, ports, service, &namespace).await?;
 
   let scaler = Arc::new(ZeroScaler::new(deployment, namespace));
 

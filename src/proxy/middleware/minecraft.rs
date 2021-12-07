@@ -2,20 +2,20 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::anyhow;
 use futures::future::{self, Either};
-use minecraft_protocol::Decoder;
-use minecraft_protocol::Encoder;
-use minecraft_protocol::chat::Payload;
-use minecraft_protocol::chat::Message;
-use minecraft_protocol::handshake::ServerBoundHandshake;
-use minecraft_protocol::login::LoginServerBoundPacket;
-use minecraft_protocol::login::LoginDisconnect;
+use minecraft_protocol::decoder::Decoder;
+use minecraft_protocol::encoder::Encoder;
+use minecraft_protocol::data::chat::Payload;
+use minecraft_protocol::data::chat::Message;
+use minecraft_protocol::data::server_status::OnlinePlayers;
+use minecraft_protocol::data::server_status::ServerVersion;
+use minecraft_protocol::data::server_status::ServerStatus;
 use minecraft_protocol::packet::Packet;
-use minecraft_protocol::status::StatusServerBoundPacket;
-use minecraft_protocol::status::StatusResponse;
-use minecraft_protocol::status::ServerVersion;
-use minecraft_protocol::status::PingResponse;
-use minecraft_protocol::status::OnlinePlayers;
-use minecraft_protocol::status::ServerStatus;
+use minecraft_protocol::version::v1_14_4::handshake::HandshakeServerBoundPacket;
+use minecraft_protocol::version::v1_14_4::login::LoginServerBoundPacket;
+use minecraft_protocol::version::v1_14_4::login::LoginDisconnect;
+use minecraft_protocol::version::v1_14_4::status::StatusServerBoundPacket;
+use minecraft_protocol::version::v1_14_4::status::StatusResponse;
+use minecraft_protocol::version::v1_14_4::status::PingResponse;
 use tokio::net::TcpStream;
 
 use crate::{ZeroScaler, ActiveConnection};
@@ -118,9 +118,14 @@ pub async fn tcp(downstream: TcpStream, upstream: Option<TcpStream>, replicas: u
       0 => {
         log::trace!("handshake");
 
-        let handshake = ServerBoundHandshake::decode(&mut packet.data.as_slice())
+        let handshake = HandshakeServerBoundPacket::decode(packet.id as u8, &mut packet.data.as_slice())
           .map_err(|e| anyhow!("Error decoding handshake packet: {:?}", e))?;
-        state = handshake.next_state;
+
+        match handshake {
+          HandshakeServerBoundPacket::Handshake(handshake) => {
+            state = handshake.next_state;
+          }
+        }
       },
       1 => {
         let status_packet = StatusServerBoundPacket::decode(packet.id as u8, &mut packet.data.as_slice())

@@ -5,7 +5,7 @@ authors = ["Markus Reiter <me@reitermark.us>"]
 edition = "2018"
 
 [dependencies]
-a2s = { version = "0.4.0", features = ["async"] }
+a2s = { version = "0.5.0", features = ["async"] }
 defer = "0.1.0"
 futures = "0.3.17"
 k8s-openapi = { version = "0.13.0", features = ["v1_20"] }
@@ -21,9 +21,9 @@ pretty-hex = "0.2.1"
 atomic-instant = "0.1.1"
 
 [patch.crates-io]
-minecraft-protocol = { git = "https://github.com/reitermarkus/minecraft-protocol", branch = "handshake" }
-minecraft-protocol-derive = { git = "https://github.com/reitermarkus/minecraft-protocol", branch = "handshake" }
-a2s = { git = "https://github.com/reitermarkus/a2s-rs", branch = "master" }
+minecraft-protocol = { git = "https://github.com/reitermarkus/minecraft-protocol", branch = "packet" }
+minecraft-protocol-derive = { git = "https://github.com/reitermarkus/minecraft-protocol", branch = "packet" }
+# a2s = { git = "https://github.com/reitermarkus/a2s-rs", branch = "master" }
 # minecraft-protocol = { path = "./minecraft-protocol/protocol" }
 # minecraft-protocol-derive = { path = "./minecraft-protocol/protocol-derive" }
 # a2s = { path = "./a2s-rs" }

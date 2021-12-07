@@ -37,7 +37,7 @@ pub fn status_response(state: &str) -> Info {
     vac: false,
     the_ship: None,
     version: "".into(),
-    edf: 0x80 | 0x10 | 0x20 | 0x01 | 0x40 * 0,
+    edf: 0x80 | 0x10 | 0x20 | 0x01 | (0x40 * 0),
     extended_server_info: ExtendedServerInfo {
       port: Some(26902),
       steam_id: Some(90151620823146498),
