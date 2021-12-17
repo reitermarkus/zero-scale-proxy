@@ -64,7 +64,12 @@ pub async fn tcp_proxy(host: impl AsRef<str>, port: u16, scaler: &ZeroScaler, pr
         connect_to_upstream_server().await?
       };
 
-      proxy(downstream, upstream).await.context("Proxy error")?;
+      match proxy(downstream, upstream).await {
+        Ok(()) => (),
+        Err(err) if err.kind() == io::ErrorKind::ConnectionReset => (),
+        Err(err) => return Err(err.into()),
+      }
+
       drop(active_connection);
 
       Ok::<(), anyhow::Error>(())
