@@ -169,6 +169,8 @@ impl ZeroScaler {
         Ok(_) => log::info!("Scaled up successfully."),
         Err(err) => log::error!("Error scaling up: {}", err),
       }
+    } else {
+      log::debug!("Already scaled up.");
     }
   }
 
