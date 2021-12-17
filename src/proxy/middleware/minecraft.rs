@@ -2,7 +2,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::anyhow;
 use futures::future::{self, Either};
-use minecraft_protocol::decoder::Decoder;
+use minecraft_protocol::error::DecodeError;
 use minecraft_protocol::encoder::Encoder;
 use minecraft_protocol::data::chat::Payload;
 use minecraft_protocol::data::chat::Message;
@@ -17,13 +17,32 @@ use minecraft_protocol::version::v1_14_4::status::StatusServerBoundPacket;
 use minecraft_protocol::version::v1_14_4::status::StatusResponse;
 use minecraft_protocol::version::v1_14_4::status::PingResponse;
 use tokio::net::TcpStream;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use crate::{ZeroScaler, ActiveConnection};
 
-fn proxy_packet(source: &mut std::net::TcpStream, destination: &mut std::net::TcpStream) -> anyhow::Result<Packet> {
+async fn read_packet(buf: &mut Vec<u8>, source: &mut TcpStream, compression: bool) -> anyhow::Result<Packet> {
+  let mut total_bytes_needed = 1;
+
+  loop {
+    while buf.len() < total_bytes_needed {
+      source.take((total_bytes_needed - buf.len()) as u64).read_to_end(buf).await?;
+    }
+
+    match Packet::decode(&mut buf.as_slice(), compression) {
+      Ok(packet) => return Ok(packet),
+      Err(DecodeError::Incomplete { bytes_needed }) => {
+        total_bytes_needed += bytes_needed;
+      },
+      err => return err.map_err(|e| anyhow!("Error forwarding packet: {:?}", e))
+    }
+  }
+}
+
+async fn proxy_packet(buf: &mut Vec<u8>, source: &mut TcpStream, destination: &mut TcpStream, compression: bool) -> anyhow::Result<Packet> {
   log::trace!("proxy_packet");
-  let packet = Packet::decode(source).map_err(|e| anyhow!("Error decoding packet: {:?}", e))?;
-  packet.encode(destination).map_err(|e| anyhow!("Error forwarding packet: {:?}", e))?;
+  let packet = read_packet(buf, source, compression).await?;
+  destination.write_all(buf).await.map_err(|e| anyhow!("Error forwarding packet: {:?}", e))?;
   Ok(packet)
 }
 
@@ -87,32 +106,26 @@ fn login_response() -> Packet {
   }
 }
 
-pub async fn tcp(downstream: TcpStream, upstream: Option<TcpStream>, replicas: usize, scaler: &ZeroScaler, favicon: Option<&str>) -> anyhow::Result<Option<(TcpStream, Option<TcpStream>, Option<ActiveConnection>)>> {
+pub async fn tcp(mut downstream: TcpStream, mut upstream: Option<TcpStream>, replicas: usize, scaler: &ZeroScaler, favicon: Option<&str>) -> anyhow::Result<Option<(TcpStream, Option<TcpStream>, Option<ActiveConnection>)>> {
   let downstream_addr = downstream.peer_addr()?;
-
-  let mut downstream_std = downstream.into_std()?;
-  downstream_std.set_nonblocking(false)?;
-
-  let mut upstream_std = if let Some(upstream) = upstream {
-    let upstream_std = upstream.into_std()?;
-    upstream_std.set_nonblocking(false)?;
-    Some(upstream_std)
-  } else {
-    None
-  };
 
   let mut active_connection = None;
   let mut state = 0;
+  let compression = false;
+
+  let mut buf = Vec::new();
   loop {
     log::trace!("middleware loop");
     log::trace!("state = {}", state);
 
-    let packet = if let Some(ref mut upstream_std) = upstream_std {
-      proxy_packet(&mut downstream_std, upstream_std)?
+    buf.clear();
+    let packet = if let Some(ref mut upstream) = upstream {
+      proxy_packet(&mut buf, &mut downstream, upstream, compression).await?
     } else {
       log::trace!("Packet::decode");
-      Packet::decode(&mut downstream_std).map_err(|e| anyhow!("Error decoding packet: {:?}", e))?
+      read_packet(&mut buf, &mut downstream, compression).await?
     };
+    buf.clear();
 
     match state {
       0 => {
@@ -135,7 +148,7 @@ pub async fn tcp(downstream: TcpStream, upstream: Option<TcpStream>, replicas: u
           StatusServerBoundPacket::StatusRequest => {
             log::trace!("status");
 
-            if upstream_std.is_some() {
+            if upstream.is_some() {
               break
             } else {
               let response = if replicas > 0 {
@@ -145,8 +158,9 @@ pub async fn tcp(downstream: TcpStream, upstream: Option<TcpStream>, replicas: u
               };
 
               response
-                .encode(&mut downstream_std)
+                .encode(&mut buf, compression.then(|| 0))
                 .map_err(|e| anyhow!("Error sending status response: {:?}", e))?;
+                downstream.write_all(&buf).await?;
               return Ok(None)
             }
           },
@@ -154,8 +168,9 @@ pub async fn tcp(downstream: TcpStream, upstream: Option<TcpStream>, replicas: u
             log::trace!("ping");
 
             ping_response()
-              .encode(&mut downstream_std)
+              .encode(&mut buf, compression.then(|| 0))
               .map_err(|e| anyhow!("Error sending ping response: {:?}", e))?;
+              downstream.write_all(&buf).await?;
             return Ok(None)
           }
         }
@@ -166,11 +181,12 @@ pub async fn tcp(downstream: TcpStream, upstream: Option<TcpStream>, replicas: u
 
           let register_fut = scaler.register_connection(downstream_addr);
 
-          let response_fut = if upstream_std.is_none() {
+          let response_fut = if upstream.is_none() {
             Either::Left(async {
               login_response()
-                .encode(&mut downstream_std)
-                .map_err(|e| anyhow!("Error sending login response: {:?}", e))
+                .encode(&mut buf, compression.then(|| 0))
+                .map_err(|e| anyhow!("Error sending login response: {:?}", e))?;
+                downstream.write_all(&buf).await.map_err(|e| anyhow!("{:?}", e))
             })
           } else {
             Either::Right(future::ok(()))
@@ -187,16 +203,6 @@ pub async fn tcp(downstream: TcpStream, upstream: Option<TcpStream>, replicas: u
       _ => break,
     }
   }
-
-  downstream_std.set_nonblocking(true)?;
-  let downstream = TcpStream::from_std(downstream_std)?;
-
-  let upstream = if let Some(upstream_std) = upstream_std {
-    upstream_std.set_nonblocking(true)?;
-    Some(TcpStream::from_std(upstream_std)?)
-  } else {
-    None
-  };
 
   Ok(Some((downstream, upstream, active_connection)))
 }
