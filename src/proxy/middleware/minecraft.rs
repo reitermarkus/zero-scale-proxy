@@ -160,17 +160,19 @@ pub async fn tcp(mut downstream: TcpStream, mut upstream: Option<TcpStream>, rep
               response
                 .encode(&mut buf, compression.then(|| 0))
                 .map_err(|e| anyhow!("Error sending status response: {:?}", e))?;
-                downstream.write_all(&buf).await?;
+              downstream.write_all(&buf).await?;
               return Ok(None)
             }
           },
           StatusServerBoundPacket::PingRequest(..) => {
             log::trace!("ping");
 
-            ping_response()
-              .encode(&mut buf, compression.then(|| 0))
-              .map_err(|e| anyhow!("Error sending ping response: {:?}", e))?;
+            if upstream.is_none() {
+              ping_response()
+                .encode(&mut buf, compression.then(|| 0))
+                .map_err(|e| anyhow!("Error sending ping response: {:?}", e))?;
               downstream.write_all(&buf).await?;
+            }
             return Ok(None)
           }
         }
@@ -186,7 +188,7 @@ pub async fn tcp(mut downstream: TcpStream, mut upstream: Option<TcpStream>, rep
               login_response()
                 .encode(&mut buf, compression.then(|| 0))
                 .map_err(|e| anyhow!("Error sending login response: {:?}", e))?;
-                downstream.write_all(&buf).await.map_err(|e| anyhow!("{:?}", e))
+              downstream.write_all(&buf).await.map_err(|e| anyhow!("{:?}", e))
             })
           } else {
             Either::Right(future::ok(()))
