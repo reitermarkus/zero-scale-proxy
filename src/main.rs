@@ -1,4 +1,5 @@
 use std::env;
+use std::net::Ipv4Addr;
 use std::sync::{Arc};
 
 use futures::future::Either;
@@ -16,14 +17,14 @@ pub(crate) use idle_checker::IdleChecker;
 mod proxy;
 
 fn parse_port(port: &str) -> (u16, String) {
-      if let Some((port, protocol)) = port.split_once("/") {
+  if let Some((port, protocol)) = port.split_once("/") {
     (port.parse::<u16>().unwrap(), protocol.to_owned())
-      } else {
+  } else {
     (port.parse::<u16>().unwrap(), "tcp".into())
-      }
+  }
 }
 
-async fn detect_upstreams(upstream_ip: Option<String>, ports: Option<String>, service: Option<String>, namespace: &str) -> Result<Vec<(String, (u16, String))>, kube::Error> {
+async fn detect_upstreams(upstream_ip: Option<Ipv4Addr>, ports: Option<String>, service: Option<String>, namespace: &str) -> Result<Vec<(Ipv4Addr, (u16, String))>, kube::Error> {
   let upstreams = if let Some((ip, ports)) = upstream_ip.zip(ports) {
     let ports = ports.split(',').map(parse_port);
 
@@ -47,6 +48,7 @@ async fn detect_upstreams(upstream_ip: Option<String>, ports: Option<String>, se
       let cluster_ip = service.spec.as_ref().and_then(|s| s.cluster_ip.as_ref());
 
       let ip = load_balancer_ip.or(cluster_ip).expect("Failed to get service IP").to_owned();
+      let ip = ip.parse::<Ipv4Addr>().expect("Failed to parse IP");
 
       let ports: Vec<(u16, String)> = service.spec.as_ref().and_then(|s| {
         s.ports.as_ref().map(|ports| ports.iter().map(|port| {
@@ -72,11 +74,11 @@ async fn main() -> anyhow::Result<()> {
   );
   let proxy_type = env::var("PROXY_TYPE").ok();
 
-  let upstream_ip = env::var("UPSTREAM_IP").ok();
+  let upstream_ip = env::var("UPSTREAM_IP").ok().map(|ip| ip.parse::<Ipv4Addr>().expect("UPSTREAM_IP is invalid"));
   let ports = env::var("PORTS").ok();
   let service = env::var("SERVICE").ok();
 
-  let upstreams: Vec<(String, (u16, String))> = detect_upstreams(upstream_ip, ports, service, &namespace).await?;
+  let upstreams: Vec<(Ipv4Addr, (u16, String))> = detect_upstreams(upstream_ip, ports, service, &namespace).await?;
 
   let scaler = Arc::new(ZeroScaler::new(deployment, namespace));
 

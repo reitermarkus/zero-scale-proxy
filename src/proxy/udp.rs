@@ -11,8 +11,8 @@ use tokio::time::{Duration, timeout};
 use crate::ZeroScaler;
 use super::middleware;
 
-async fn listener(port: u16) -> anyhow::Result<Arc<UdpSocket>> {
-  let downstream = UdpSocket::bind((Ipv4Addr::new(0, 0, 0, 0), port)).await?;
+async fn listener(host: Ipv4Addr, port: u16) -> anyhow::Result<Arc<UdpSocket>> {
+  let downstream = UdpSocket::bind((host, port)).await?;
   log::info!("Listening on {}/udp.", downstream.local_addr()?);
   Ok(Arc::new(downstream))
 }
@@ -94,16 +94,15 @@ async fn proxy(
 }
 
 pub async fn udp_proxy(
-  host: impl AsRef<str>,
+  host: Ipv4Addr,
   port: u16,
   scaler: Arc<ZeroScaler>,
   proxy_type: Option<String>,
   timeout_duration: Duration
 ) -> anyhow::Result<()> {
-  let host = host.as_ref();
   let upstream = format!("{}:{}", host, port);
 
-  let downstream_recv = listener(port).await?;
+  let downstream_recv = listener(host, port).await?;
 
   let mut senders = HashMap::<SocketAddr, UnboundedSender<Vec<u8>>>::new();
 
