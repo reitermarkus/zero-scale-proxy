@@ -102,7 +102,7 @@ pub async fn udp_proxy(
 ) -> anyhow::Result<()> {
   let upstream = format!("{}:{}", host, port);
 
-  let downstream_recv = listener(host, port).await?;
+  let downstream_recv = listener(Ipv4Addr::new(0, 0, 0, 0), port).await?;
 
   let mut senders = HashMap::<SocketAddr, UnboundedSender<Vec<u8>>>::new();
 
@@ -128,7 +128,7 @@ pub async fn udp_proxy(
       let (sender, mut receiver) = mpsc::unbounded_channel::<Vec<u8>>();
 
       tokio::spawn(async move {
-        let socket = UdpSocket::bind((Ipv4Addr::new(0, 0, 0, 0), 0)).and_then(|socket| async {
+        let socket = UdpSocket::bind(downstream_addr).and_then(|socket| async {
           socket.connect(&upstream_addr).await?;
           Ok(socket)
         }).await;
