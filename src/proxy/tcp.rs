@@ -4,7 +4,7 @@ use std::net::{Ipv4Addr, SocketAddr};
 use anyhow::Context;
 use futures::prelude::*;
 use tokio::io;
-use tokio::net::{TcpListener, TcpStream, TcpSocket};
+use tokio::net::{TcpListener, TcpStream};
 use tokio_stream::wrappers::TcpListenerStream;
 
 use crate::ZeroScaler;
@@ -26,13 +26,9 @@ pub async fn tcp_proxy(host: Ipv4Addr, port: u16, scaler: &ZeroScaler, proxy_typ
   let listener_stream = listener_stream(Ipv4Addr::new(0, 0, 0, 0), port).await?;
 
   listener_stream.err_into::<anyhow::Error>().try_for_each_concurrent(None, |downstream| async {
-    let downstream_addr = downstream.peer_addr().context("Failed to get peer address")?;
-
     let connect_to_upstream_server = || async {
       log::info!("Connecting to upstream server {}:{}.", host, port);
-      let socket = TcpSocket::new_v4().context("Failed to create socket")?;
-      socket.bind(downstream_addr).context("Failed to bind socket to peer address")?;
-      socket.connect(SocketAddr::new(host.into(), port)).await.context("Error connecting to upstream server")
+      TcpStream::connect(SocketAddr::new(host.into(), port)).await.context("Error connecting to upstream server")
     };
 
     let proxy = || async {
