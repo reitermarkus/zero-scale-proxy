@@ -8,13 +8,13 @@ FROM base as planner
 COPY . .
 RUN cargo chef prepare --recipe-path recipe.json
 
-FROM base as cacher
+FROM base as cache
 COPY --from=planner /app/recipe.json recipe.json
 RUN cargo chef cook --release --recipe-path recipe.json
 
 FROM base as builder
-COPY --from=cacher /app/target target
-COPY --from=cacher /usr/local/cargo /usr/local/cargo
+COPY --from=cache /app/target target
+COPY --from=cache /usr/local/cargo /usr/local/cargo
 COPY . .
 RUN cargo build --release --bin zero-scale-proxy
 
