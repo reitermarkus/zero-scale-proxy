@@ -19,12 +19,10 @@ docker buildx build . \
   --cache-from "type=registry,ref=${cache_image}" \
   "${cache_to[@]}" \
   --target cache \
-  --tag "${cache_image}" \
-  "${@}"
+  --tag "${cache_image}"
 
 docker buildx build . \
   --platform linux/amd64,linux/arm64 \
   --cache-from "type=registry,ref=${cache_image}" \
-  "${cache_to[@]}" \
   --tag "${image}" \
   "${@}"
