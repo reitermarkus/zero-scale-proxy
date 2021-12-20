@@ -2,7 +2,7 @@
 name = "zero-scale-proxy"
 version = "0.1.0"
 authors = ["Markus Reiter <me@reitermark.us>"]
-edition = "2018"
+edition = "2021"
 
 [dependencies]
 a2s = { version = "0.5.0", features = ["async"] }
