@@ -5,6 +5,8 @@ set -euo pipefail
 : "${image:=reitermarkus/zero-scale-proxy}"
 : "${cache_image:=${image}:cache}"
 
+docker pull "${cache_image}" || true
+
 if [[ "${1-}" = '--push' ]]; then
   cache_to=( --cache-to "type=registry,ref=${cache_image},mode=max" )
 else
@@ -18,11 +20,5 @@ docker buildx build . \
   --platform linux/amd64,linux/arm64 \
   --cache-from "type=registry,ref=${cache_image}" \
   "${cache_to[@]}" \
-  --target cache \
-  --tag "${cache_image}"
-
-docker buildx build . \
-  --platform linux/amd64,linux/arm64 \
-  --cache-from "type=registry,ref=${cache_image}" \
   --tag "${image}" \
   "${@}"
