@@ -1,5 +1,8 @@
-FROM lukemathwalker/cargo-chef as base
+FROM rust:slim-buster as base
 WORKDIR /app
+RUN apt-get update \
+ && apt-get install -y pkg-config libssl-dev
+RUN cargo install cargo-chef
 
 FROM base as planner
 COPY . .
