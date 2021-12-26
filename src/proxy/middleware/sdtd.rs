@@ -106,13 +106,19 @@ pub async fn udp(
         None,
         Rule::vec_to_bytes(rules_response(IDLE_MSG))
       )
+    } else if replicas.ready == 0 {
+      (
+        true,
+        None,
+        Rule::vec_to_bytes(rules_response(STARTING_MSG))
+      )
     } else {
       match upstream_recv.recv_from(&mut recv_buf).await {
         Ok((size, _)) => (false, None, recv_buf[..size].to_vec()),
-        Err(_) => (
+        Err(err) => (
           true,
           None,
-          Rule::vec_to_bytes(rules_response(STARTING_MSG))
+          Rule::vec_to_bytes(rules_response(&format!("Server Error: {}", err)))
         ),
       }
     }
