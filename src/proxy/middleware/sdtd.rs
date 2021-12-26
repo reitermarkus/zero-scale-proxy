@@ -10,6 +10,7 @@ use tokio::sync::mpsc::UnboundedReceiver;
 use pretty_hex::PrettyHex;
 
 use crate::{ZeroScaler, ActiveConnection};
+use super::{IDLE_MSG, STARTING_MSG};
 
 const INFO_REQUEST: [u8; 25] = [
   0xff, 0xff, 0xff, 0xff, 0x54, 0x53, 0x6f, 0x75, 0x72, 0x63, 0x65, 0x20, 0x45, 0x6e, 0x67, 0x69,
@@ -103,15 +104,15 @@ pub async fn udp(
       (
         true,
         None,
-        Rule::vec_to_bytes(rules_response("Server is currently idle, connect to scale up."))
+        Rule::vec_to_bytes(rules_response(IDLE_MSG))
       )
     } else {
       match upstream_recv.recv_from(&mut recv_buf).await {
         Ok((size, _)) => (false, None, recv_buf[..size].to_vec()),
-        Err(err) => (
+        Err(_) => (
           true,
           None,
-          Rule::vec_to_bytes(rules_response(&format!("Server is starting, hang on. ({})", err)))
+          Rule::vec_to_bytes(rules_response(STARTING_MSG))
         ),
       }
     }

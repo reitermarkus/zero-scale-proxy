@@ -20,6 +20,7 @@ use tokio::net::TcpStream;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use crate::{ZeroScaler, ActiveConnection};
+use super::{IDLE_MSG, STARTING_MSG};
 
 async fn read_packet(buf: &mut Vec<u8>, source: &mut TcpStream, compression: bool) -> anyhow::Result<Packet> {
   let mut total_bytes_needed = 1;
@@ -94,7 +95,7 @@ fn ping_response() -> Packet {
 
 fn login_response() -> Packet {
   let response = LoginDisconnect {
-    reason: Message::new(Payload::text("Server is starting, hang on…")),
+    reason: Message::new(Payload::text(STARTING_MSG)),
   };
 
   let mut data = Vec::new();
@@ -152,9 +153,9 @@ pub async fn tcp(mut downstream: TcpStream, mut upstream: Option<TcpStream>, rep
               break
             } else {
               let response = if replicas > 0 {
-                status_response("starting", "Server is starting.", favicon)
+                status_response("starting", STARTING_MSG, favicon)
               } else {
-                status_response("idle", "Server is currently idle.", favicon)
+                status_response("idle", IDLE_MSG, favicon)
               };
 
               response
