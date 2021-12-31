@@ -9,8 +9,9 @@ if [[ "${1}" == 7d2d ]]; then
   export NAMESPACE=default
   export PROXY_TYPE=7d2d
 elif [[ "${1}" == csgo ]]; then
-  export UPSTREAM_HOST=csgo.local
-  export UPSTREAM_PORT=27500
+  export SERVICE=csgo-tcp,csgo-udp
+  export DEPLOYMENT=csgo
+  export NAMESPACE=default
   export PROXY_TYPE=csgo
 elif [[ "${1}" == minecraft ]]; then
   export SERVICE=minecraft-minecraft
