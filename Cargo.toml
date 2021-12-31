@@ -23,7 +23,7 @@ atomic-instant = "0.1.1"
 [patch.crates-io]
 minecraft-protocol = { git = "https://github.com/reitermarkus/minecraft-protocol", branch = "packet" }
 minecraft-protocol-derive = { git = "https://github.com/reitermarkus/minecraft-protocol", branch = "packet" }
-# a2s = { git = "https://github.com/reitermarkus/a2s-rs", branch = "master" }
+a2s = { git = "https://github.com/reitermarkus/a2s-rs", branch = "player-from-cursor" }
 # minecraft-protocol = { path = "./minecraft-protocol/protocol" }
 # minecraft-protocol-derive = { path = "./minecraft-protocol/protocol-derive" }
 # a2s = { path = "./a2s-rs" }

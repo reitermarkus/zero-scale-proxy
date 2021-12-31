@@ -144,6 +144,24 @@ pub async fn udp_proxy(
         let upstream_recv = Arc::clone(&upstream);
 
         let active_connection = match proxy_type.as_deref() {
+          Some("csgo") => {
+            let middleware_res = timeout(
+              timeout_duration,
+              middleware::csgo::udp(
+                &mut receiver,
+                downstream_send.clone(),
+                downstream_addr,
+                upstream_recv.clone(),
+                upstream_send.clone(),
+                scaler.clone()
+              )
+            ).await;
+
+            match middleware_res {
+              Ok((true, _)) | Err(_) => return,
+              Ok((false, active_connection)) => active_connection,
+            }
+          },
           Some("7d2d") => {
             let middleware_res = timeout(
               timeout_duration,
