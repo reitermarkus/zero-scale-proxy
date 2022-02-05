@@ -127,12 +127,17 @@ pub async fn udp_proxy(
       let (sender, mut receiver) = mpsc::unbounded_channel::<Vec<u8>>();
 
       tokio::spawn(async move {
+        #[allow(unused_mut)]
+        let mut transparent = false;
+
         #[cfg(not(target_os = "linux"))]
         let socket = UdpSocket::bind((Ipv4Addr::new(0, 0, 0, 0), 0)).await;
 
         #[cfg(target_os = "linux")]
         let socket = {
-          if std::env::var("TRANSPARENT_IP").ok().map(|s| s == "true").unwrap_or(false) {
+          transparent = std::env::var("TRANSPARENT_IP").ok().map(|s| s == "true").unwrap_or(false);
+
+          if transparent {
             use socket2::{Domain, Socket, Type};
             let socket = Socket::new(Domain::IPV4, Type::DGRAM.nonblocking().cloexec(), None).and_then(|s| {
               s.set_reuse_address(true)?;
@@ -142,13 +147,7 @@ pub async fn udp_proxy(
               Ok(s)
             });
 
-            match socket {
-              Ok(socket) => UdpSocket::from_std(socket.into()),
-              Err(err) => {
-                log::warn!("Failed to create transparent socket, falling back to creating non-transparent socket: {}", err);
-                UdpSocket::bind((Ipv4Addr::new(0, 0, 0, 0), 0)).await
-              }
-            }
+            socket.and_then(|s| UdpSocket::from_std(s.into()))
           } else {
             UdpSocket::bind((Ipv4Addr::new(0, 0, 0, 0), 0)).await
           }
@@ -158,7 +157,6 @@ pub async fn udp_proxy(
           Ok(socket) => socket.connect(&upstream_addr).await.map(|_| socket),
           Err(err) => Err(err),
         };
-
 
         let upstream = match socket {
           Ok(socket) => {
@@ -186,7 +184,8 @@ pub async fn udp_proxy(
                 downstream_addr,
                 upstream_recv.clone(),
                 upstream_send.clone(),
-                scaler.clone()
+                scaler.clone(),
+                transparent
               )
             ).await;
 
@@ -204,7 +203,8 @@ pub async fn udp_proxy(
                 downstream_addr,
                 upstream_recv.clone(),
                 upstream_send.clone(),
-                scaler.clone()
+                scaler.clone(),
+                transparent
               )
             ).await;
 

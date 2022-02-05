@@ -48,6 +48,7 @@ pub async fn udp(
   scaler: Arc<ZeroScaler>,
   status_response: impl FnOnce(&str) -> Info,
   rules_response: impl FnOnce(&str) -> Vec<Rule>,
+  transparent: bool,
 ) -> (bool, Option<ActiveConnection>) {
   let send_buf = match receiver.recv().await {
     Some(send_buf) => send_buf,
@@ -59,8 +60,13 @@ pub async fn udp(
   };
   let recv_fut = async move {
     let mut recv_buf = vec![0; 64 * 1024];
-    upstream_recv.recv_from(&mut recv_buf).await.context("Error receiving from upstream")
-      .map(|(size, _)| recv_buf[..size].to_vec())
+
+    if transparent {
+      Ok(recv_buf[..4].to_vec())
+    } else {
+      upstream_recv.recv_from(&mut recv_buf).await.context("Error receiving from upstream")
+        .map(|(size, _)| recv_buf[..size].to_vec())
+    }
   };
 
   let (control_flow, active_connection, buf) = if send_buf.get(0..INFO_REQUEST.len()) == Some(&INFO_REQUEST) {

@@ -49,6 +49,7 @@ pub async fn udp(
   upstream_recv: Arc<UdpSocket>,
   upstream_send: Arc<UdpSocket>,
   scaler: Arc<ZeroScaler>,
+  transparent: bool,
 ) -> (bool, Option<ActiveConnection>) {
-  a2s_based::udp(receiver, downstream_send, downstream_addr, upstream_recv, upstream_send, scaler, status_response, rules_response).await
+  a2s_based::udp(receiver, downstream_send, downstream_addr, upstream_recv, upstream_send, scaler, status_response, rules_response, transparent).await
 }
