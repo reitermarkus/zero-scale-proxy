@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::env;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 
@@ -132,21 +133,25 @@ pub async fn udp_proxy(
 
         #[cfg(target_os = "linux")]
         let socket = {
-          use socket2::{Domain, Socket, Type};
-          let socket = Socket::new(Domain::IPV4, Type::DGRAM.nonblocking().cloexec(), None).and_then(|s| {
-            s.set_reuse_address(true)?;
-            s.set_reuse_port(true)?;
-            s.set_ip_transparent(true)?;
-            s.bind(&downstream_addr.into())?;
-            Ok(s)
-          });
+          if env::var("TRANSPARENT_IP").ok().map(|s| s == "true").unwrap_or(false) {
+            use socket2::{Domain, Socket, Type};
+            let socket = Socket::new(Domain::IPV4, Type::DGRAM.nonblocking().cloexec(), None).and_then(|s| {
+              s.set_reuse_address(true)?;
+              s.set_reuse_port(true)?;
+              s.set_ip_transparent(true)?;
+              s.bind(&downstream_addr.into())?;
+              Ok(s)
+            });
 
-          match socket {
-            Ok(socket) => UdpSocket::from_std(socket.into()),
-            Err(err) => {
-              log::warn!("Failed to create transparent socket, falling back to creating non-transparent socket: {}", err);
-              UdpSocket::bind((Ipv4Addr::new(0, 0, 0, 0), 0)).await
+            match socket {
+              Ok(socket) => UdpSocket::from_std(socket.into()),
+              Err(err) => {
+                log::warn!("Failed to create transparent socket, falling back to creating non-transparent socket: {}", err);
+                UdpSocket::bind((Ipv4Addr::new(0, 0, 0, 0), 0)).await
+              }
             }
+          } else {
+            UdpSocket::bind((Ipv4Addr::new(0, 0, 0, 0), 0)).await
           }
         };
 
