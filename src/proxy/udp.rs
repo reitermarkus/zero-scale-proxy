@@ -128,7 +128,25 @@ pub async fn udp_proxy(
       let (sender, mut receiver) = mpsc::unbounded_channel::<Vec<u8>>();
 
       tokio::spawn(async move {
-        let socket = UdpSocket::bind((Ipv4Addr::new(0, 0, 0, 0), 0)).and_then(|socket| async {
+        #[cfg(not(target_os = "linux"))]
+        let socket = UdpSocket::bind((Ipv4Addr::new(0, 0, 0, 0), 0));
+
+        #[cfg(target_os = "linux")]
+        let socket = {
+          use socket2::{Domain, Socket, Type};
+          let mut socket = Socket::new(Domain::IPV4, Type::DGRAM.nonblocking().cloexec(), None);
+          socket.set_ip_transparent(true)?;
+
+          match socket.bind(&downstream_addr.into()) {
+            Ok(socket) => UdpSocket::from_std(socket.into()),
+            Err(err) => {
+              log::warn!("Failed to create transparent socket, falling back to creating non-transparent socket.");
+              UdpSocket::bind((Ipv4Addr::new(0, 0, 0, 0), 0))
+            }
+          }
+        };
+
+        let socket = socket.and_then(|socket| async {
           socket.connect(&upstream_addr).await?;
           Ok(socket)
         }).await;
