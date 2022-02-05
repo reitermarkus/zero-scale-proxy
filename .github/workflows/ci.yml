@@ -10,9 +10,6 @@ jobs:
       - uses: azohra/shell-linter@v0.4.0
   build:
     runs-on: ubuntu-latest
-    env:
-      image: '${{ github.actor }}/zero-scale-proxy'
-      cache_image: '${{ github.actor }}/zero-scale-proxy:cache'
     steps:
       - name: Check out Repository
         uses: actions/checkout@v2
@@ -34,4 +31,4 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
           tags: |
-            ghcr.io/${{ github.actor }}/zero-scale-proxy:latest
+            ghcr.io/${{ github.repository }}:latest
