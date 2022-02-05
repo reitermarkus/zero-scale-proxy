@@ -35,16 +35,3 @@ jobs:
           cache-to: type=gha,mode=max
           tags: |
             ghcr.io/${{ github.actor }}/zero-scale-proxy:latest
-      - name: Build Docker image
-        run: ./build.sh
-      # - name: Run Docker image
-      #   run: |
-      #     docker run \
-      #       -e PORT='25565' \
-      #       -e TARGET_NAME='minecraft' \
-      #       -e TARGET_NAMESPACE='default' \
-      #       '${{ github.actor }}/zero-scale-proxy' -- 'true'
-      - name: Log into Docker Hub
-        run: echo '${{ secrets.DOCKER_TOKEN }}' | docker login -u '${{ github.actor }}' --password-stdin
-      - name: Build and push Docker image
-        run: ./build.sh --push
