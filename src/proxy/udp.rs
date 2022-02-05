@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::env;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 
@@ -133,7 +132,7 @@ pub async fn udp_proxy(
 
         #[cfg(target_os = "linux")]
         let socket = {
-          if env::var("TRANSPARENT_IP").ok().map(|s| s == "true").unwrap_or(false) {
+          if std::env::var("TRANSPARENT_IP").ok().map(|s| s == "true").unwrap_or(false) {
             use socket2::{Domain, Socket, Type};
             let socket = Socket::new(Domain::IPV4, Type::DGRAM.nonblocking().cloexec(), None).and_then(|s| {
               s.set_reuse_address(true)?;

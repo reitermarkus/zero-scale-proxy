@@ -1,3 +1,4 @@
+use std::env;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
@@ -12,7 +13,7 @@ use super::a2s_based;
 pub fn status_response(state: &str) -> Info {
   Info {
     protocol: 0,
-    name: "Counter-Strike: Global Offensive".into(),
+    name: env::var("SERVER_NAME").unwrap_or_else(|_| "Counter-Strike: Global Offensive".into()),
     map: state.to_owned(),
     folder: "csgo".into(),
     game: "Counter-Strike: Global Offensive".into(),
