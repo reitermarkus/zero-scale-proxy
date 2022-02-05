@@ -4,8 +4,9 @@ version = 3
 
 [[package]]
 name = "a2s"
-version = "0.5.0"
-source = "git+https://github.com/rumblefrog/a2s-rs?branch=master#c2f9095743821b74164eecacf817348244124f30"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3601139350a4e432109a5a177397be1da90a68f666da958f5cb54caed8bbe736"
 dependencies = [
  "byteorder",
  "bzip2",
@@ -777,7 +778,7 @@ dependencies = [
 [[package]]
 name = "minecraft-protocol"
 version = "0.1.0"
-source = "git+https://github.com/reitermarkus/minecraft-protocol?branch=packet#12f1086f307a63c1deaeb573454b818b7d20e467"
+source = "git+https://github.com/reitermarkus/minecraft-protocol?branch=packet#71e34f115182562c0123172687b1319f632d7b1a"
 dependencies = [
  "byteorder",
  "flate2",
@@ -791,7 +792,7 @@ dependencies = [
 [[package]]
 name = "minecraft-protocol-derive"
 version = "0.0.0"
-source = "git+https://github.com/reitermarkus/minecraft-protocol?branch=packet#12f1086f307a63c1deaeb573454b818b7d20e467"
+source = "git+https://github.com/reitermarkus/minecraft-protocol?branch=packet#71e34f115182562c0123172687b1319f632d7b1a"
 dependencies = [
  "proc-macro2",
  "quote",
