@@ -3,7 +3,6 @@ use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 
 use anyhow::Context;
-use futures::TryFutureExt;
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc::{self, UnboundedSender, UnboundedReceiver};
 use tokio::time::{Duration, timeout};
@@ -129,7 +128,7 @@ pub async fn udp_proxy(
 
       tokio::spawn(async move {
         #[cfg(not(target_os = "linux"))]
-        let socket = UdpSocket::bind((Ipv4Addr::new(0, 0, 0, 0), 0));
+        let socket = UdpSocket::bind((Ipv4Addr::new(0, 0, 0, 0), 0)).await;
 
         #[cfg(target_os = "linux")]
         let socket = {
