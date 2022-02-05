@@ -134,8 +134,12 @@ pub async fn udp_proxy(
         #[cfg(target_os = "linux")]
         let socket = {
           use socket2::{Domain, Socket, Type};
-          let mut socket = Socket::new(Domain::IPV4, Type::DGRAM.nonblocking().cloexec(), None);
-          socket.set_ip_transparent(true)?;
+          let mut socket = Socket::new(Domain::IPV4, Type::DGRAM.nonblocking().cloexec(), None).and_then(|s| {
+            socket.set_reuse_address(true)?;
+            socket.set_reuse_port(true)?;
+            socket.set_ip_transparent(true)?;
+            Ok(s)
+          })
 
           match socket.bind(&downstream_addr.into()) {
             Ok(socket) => UdpSocket::from_std(socket.into()),

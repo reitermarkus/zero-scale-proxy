@@ -24,7 +24,7 @@ socket2 = { version = "0.4.4", features = ["all"] }
 [patch.crates-io]
 minecraft-protocol = { git = "https://github.com/reitermarkus/minecraft-protocol", branch = "packet" }
 minecraft-protocol-derive = { git = "https://github.com/reitermarkus/minecraft-protocol", branch = "packet" }
-a2s = { git = "https://github.com/reitermarkus/a2s-rs", branch = "player-from-cursor" }
+a2s = { git = "https://github.com/rumblefrog/a2s-rs", branch = "master" }
 # minecraft-protocol = { path = "./minecraft-protocol/protocol" }
 # minecraft-protocol-derive = { path = "./minecraft-protocol/protocol-derive" }
 # a2s = { path = "./a2s-rs" }

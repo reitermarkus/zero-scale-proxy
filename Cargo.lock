@@ -5,7 +5,7 @@ version = 3
 [[package]]
 name = "a2s"
 version = "0.5.0"
-source = "git+https://github.com/reitermarkus/a2s-rs?branch=player-from-cursor#1275f0709e77b8eceea1a3cd38ce7db2e532b2b6"
+source = "git+https://github.com/rumblefrog/a2s-rs?branch=master#c2f9095743821b74164eecacf817348244124f30"
 dependencies = [
  "byteorder",
  "bzip2",
