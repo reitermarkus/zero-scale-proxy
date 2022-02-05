@@ -156,8 +156,15 @@ pub async fn udp_proxy(
           Err(err) => Err(err),
         };
 
+
         let upstream = match socket {
-          Ok(socket) => Arc::new(socket),
+          Ok(socket) => {
+            if let Ok(local_addr) = socket.local_addr() {
+              log::info!("Bound UDP socket on {}.", local_addr);
+            }
+
+            Arc::new(socket)
+          },
           Err(err) => {
             log::error!("{}", err);
             return
