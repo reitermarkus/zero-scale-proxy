@@ -79,7 +79,7 @@ pub async fn udp(
 
       match send_fut.and_then(|_| recv_fut).await {
         Ok(ok) => {
-          if log_enabled!(Debug) {
+          if log_enabled!(Debug) && !transparent {
             let info = Info::from_cursor(Cursor::new(ok[4..].to_vec()));
             log::debug!("INFO response: {:#?}", info);
           }
@@ -108,7 +108,7 @@ pub async fn udp(
     } else {
       match send_fut.and_then(|_| recv_fut).await {
         Ok(ok) => {
-          if log_enabled!(Debug) {
+          if log_enabled!(Debug) && !transparent {
             let info = Rule::from_cursor(Cursor::new(ok[4..].to_vec()));
             log::debug!("RULES response: {:#?}", info);
           }
@@ -127,7 +127,7 @@ pub async fn udp(
 
     match send_fut.and_then(|_| recv_fut).await {
       Ok(ok) => {
-        if log_enabled!(Debug) {
+        if log_enabled!(Debug) && !transparent {
           let app_id = 0; // TODO
           let info = Player::from_cursor(Cursor::new(ok[4..].to_vec()), app_id);
           log::debug!("PLAYER response: {:#?}", info);
@@ -142,7 +142,7 @@ pub async fn udp(
 
     match send_fut.and_then(|_| recv_fut).await {
       Ok(ok) => {
-        if log_enabled!(Debug) {
+        if log_enabled!(Debug) && !transparent {
           log::debug!("LAN_SEARCH response: {:#?}", ok.hex_dump());
         }
 
@@ -168,6 +168,10 @@ pub async fn udp(
       (Err(_), _) => return (true, None),
     }
   };
+
+  if transparent {
+    return (control_flow, active_connection)
+  }
 
   match downstream_send.send_to(&buf, downstream_addr).await.context("Error sending to downstream") {
     Ok(_) => (control_flow, active_connection),

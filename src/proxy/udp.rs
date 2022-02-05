@@ -80,8 +80,17 @@ async fn proxy(
   downstream_addr: SocketAddr,
   upstream_recv: Arc<UdpSocket>,
   upstream_send: Arc<UdpSocket>,
-  timeout_duration: Duration
+  timeout_duration: Duration,
+  transparent: bool
 ) {
+  if transparent {
+    if let Err(err) = forwarder(downstream_recv, upstream_send, timeout_duration).await {
+      log::error!("Forwarder failed: {}", err);
+    }
+
+    return
+  }
+
   tokio::select! {
     res = forwarder(downstream_recv, upstream_send, timeout_duration) => if let Err(err) = res {
       log::error!("Forwarder failed: {}", err);
@@ -127,7 +136,7 @@ pub async fn udp_proxy(
       let (sender, mut receiver) = mpsc::unbounded_channel::<Vec<u8>>();
 
       tokio::spawn(async move {
-        #[allow(unused_mut)]
+        #[allow(unused_assignments, unused_mut)]
         let mut transparent = false;
 
         #[cfg(not(target_os = "linux"))]
@@ -147,7 +156,10 @@ pub async fn udp_proxy(
               Ok(s)
             });
 
-            socket.and_then(|s| UdpSocket::from_std(s.into()))
+            match socket {
+              Ok(socket) => UdpSocket::from_std(socket.into()),
+              Err(err) => Err(err.into()),
+            }
           } else {
             UdpSocket::bind((Ipv4Addr::new(0, 0, 0, 0), 0)).await
           }
@@ -221,7 +233,7 @@ pub async fn udp_proxy(
           },
         };
 
-        proxy(receiver, downstream_send, downstream_addr, upstream_recv, upstream_send, timeout_duration).await;
+        proxy(receiver, downstream_send, downstream_addr, upstream_recv, upstream_send, timeout_duration, transparent).await;
         drop(active_connection)
       });
 
