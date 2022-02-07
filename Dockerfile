@@ -1,15 +1,17 @@
-FROM rust:slim-buster as builder
+FROM rust:slim-buster as base
 WORKDIR /app
 RUN apt-get update \
  && apt-get install -y pkg-config libssl-dev
+RUN cargo install cargo-chef
 
-COPY Cargo.* ./
-RUN mkdir -p src && touch src/lib.rs \
- && cargo fetch \
- && cargo build --release \
- && rm src/lib.rs
+FROM base as planner
+COPY . .
+RUN cargo chef prepare --recipe-path recipe.json
 
-COPY ./src/ ./src/
+FROM base as builder
+COPY --from=planner /app/recipe.json recipe.json
+RUN cargo chef cook --release --recipe-path recipe.json
+COPY . .
 RUN cargo build --release --bin zero-scale-proxy
 
 FROM debian:buster-slim as runner
