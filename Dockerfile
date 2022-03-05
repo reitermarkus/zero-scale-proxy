@@ -1,7 +1,7 @@
 FROM rust:slim-buster as base
 WORKDIR /app
 RUN apt-get update \
- && apt-get install --no-install-recommends -y pkg-config=0.29-6 libssl-dev=1.1.1d-\* \
+ && apt-get install --no-install-recommends -y pkg-config=0.29-6 \
  && rm -rf /var/lib/apt/lists/* \
  && cargo install cargo-chef
 
@@ -17,7 +17,7 @@ RUN cargo build --release --bin zero-scale-proxy
 
 FROM debian:buster-slim as runner
 RUN apt-get update \
- && apt-get install --no-install-recommends -y openssl=1.1.1d-\* tini=0.18.0-1 \
+ && apt-get install --no-install-recommends -y tini=0.18.0-1 \
  && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /app/target/release/zero-scale-proxy /usr/local/bin/
 ENTRYPOINT ["tini", "--"]
