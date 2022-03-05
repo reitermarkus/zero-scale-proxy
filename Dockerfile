@@ -16,7 +16,7 @@ RUN cargo build --release --bin zero-scale-proxy
 
 FROM debian:buster-slim as runner
 RUN apt-get update \
- && apt-get install -y openssl tini \
+ && apt-get install -y openssl=1.1.1d-0 tini=0.18.0-1 \
  && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /app/target/release/zero-scale-proxy /usr/local/bin/
 ENTRYPOINT ["tini", "--"]
