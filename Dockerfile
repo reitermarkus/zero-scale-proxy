@@ -17,7 +17,7 @@ RUN cargo chef cook --release --recipe-path recipe.json
 COPY . .
 RUN cargo build --release --bin zero-scale-proxy
 
-FROM alpine:3.14.3 as runner
+FROM alpine:3.15.0 as runner
 # renovate: datasource=repology depName=alpine_3_14/tini versioning=loose
 ARG TINI_VERSION=0.19.0-r0
 RUN apk add --no-cache tini=${TINI_VERSION}
