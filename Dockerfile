@@ -1,11 +1,5 @@
-FROM rust:1.59.0-alpine3.14 as base
+FROM lukemathwalker/cargo-chef:0.1.34-rust-1.59.0-alpine3.14 as base
 WORKDIR /app
-# renovate: datasource=repology depName=alpine_3_14/musl-dev versioning=loose
-ARG MUSL_DEV_VERSION=1.2.2-r3
-# renovate: datasource=repology depName=alpine_3_14/pkgconf versioning=loose
-ARG PKGCONF_VERSION=1.7.4-r0
-RUN apk add --no-cache musl-dev=${MUSL_DEV_VERSION} pkgconf=${PKGCONF_VERSION} \
- && cargo install cargo-chef --locked
 
 FROM base as planner
 COPY . .
