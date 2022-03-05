@@ -1,7 +1,7 @@
 FROM rust:slim-buster as base
 WORKDIR /app
 RUN apt-get update \
- && apt-get install -y pkg-config libssl-dev
+ && apt-get install -y pkg-config=0.29-6 libssl-dev=1.1.1d-0
 RUN cargo install cargo-chef
 
 FROM base as planner
