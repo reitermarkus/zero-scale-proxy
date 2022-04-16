@@ -18,7 +18,7 @@ tokio-stream = { version = "0.1.7", features = ["net"] }
 log = "0.4.14"
 env_logger = "0.9.0"
 anyhow = "1.0.55"
-pretty-hex = "0.2.1"
+pretty-hex = "0.3.0"
 atomic-instant = "0.1.1"
 socket2 = { version = "0.4.4", features = ["all"] }
 
