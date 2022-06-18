@@ -11,7 +11,7 @@ RUN cargo chef cook --release --recipe-path recipe.json
 COPY . .
 RUN cargo build --release --bin zero-scale-proxy
 
-FROM alpine:3.15.0 as runner
+FROM alpine:3.16.0 as runner
 RUN apk add --no-cache tini=0.19.0-r0
 COPY --from=builder /app/target/release/zero-scale-proxy /usr/local/bin/
 ENTRYPOINT ["tini", "--"]
