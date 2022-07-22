@@ -76,14 +76,22 @@ async fn main() -> anyhow::Result<()> {
   );
 
   let proxy_type = match env::var("PROXY_TYPE") {
-    Ok(proxy_type) => match proxy_type.parse() {
-      Ok(proxy_type) => proxy_type,
+    Ok(proxy_type) => match proxy_type.parse::<ProxyType>() {
+      Ok(proxy_type) => {
+        log::info!("Using proxy type '{}'.", proxy_type.as_str());
+        proxy_type
+      },
       Err(_) => {
-        log::warn!("Unknown proxy type '{}', reverting to default proxy type.", proxy_type);
-        ProxyType::default()
+        let default_proxy_type = ProxyType::default();
+        log::warn!("Unknown proxy type '{}', defaulting to '{}' proxy type.", proxy_type, default_proxy_type.as_str());
+        default_proxy_type
       }
     },
-    Err(_) => ProxyType::default(),
+    Err(_) => {
+      let default_proxy_type = ProxyType::default();
+      log::info!("No proxy type specified, defaulting to '{}'.", default_proxy_type.as_str());
+      default_proxy_type
+    },
   };
 
   let upstream_ip = env::var("UPSTREAM_IP").ok().map(|ip| ip.parse::<Ipv4Addr>().expect("UPSTREAM_IP is invalid"));

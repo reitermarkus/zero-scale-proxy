@@ -15,6 +15,18 @@ impl Default for ProxyType {
   }
 }
 
+impl ProxyType {
+  pub fn as_str(&self) -> &str {
+    match self {
+      Self::Csgo => "csgo",
+      Self::Sdtd => "sdtd",
+      Self::Minecraft => "minecraft",
+      Self::TeamSpeak => "teamspeak",
+      Self::Generic => "generic",
+    }
+  }
+}
+
 pub struct UnknownProxyType;
 
 impl FromStr for ProxyType {
@@ -23,7 +35,7 @@ impl FromStr for ProxyType {
   fn from_str(s: &str) -> Result<Self, Self::Err> {
     Ok(match s {
       "csgo" => ProxyType::Csgo,
-      "sdtd" => ProxyType::Sdtd,
+      "sdtd" | "7d2d" => ProxyType::Sdtd,
       "minecraft" => ProxyType::Minecraft,
       "teamspeak" => ProxyType::TeamSpeak,
       "generic" => ProxyType::Generic,
