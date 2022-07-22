@@ -1,4 +1,4 @@
-FROM lukemathwalker/cargo-chef:0.1.35-rust-1.59.0-alpine3.14 as base
+FROM lukemathwalker/cargo-chef:0.1.38-rust-1.62.0-alpine3.16 as base
 WORKDIR /app
 
 FROM base as planner
@@ -11,7 +11,7 @@ RUN cargo chef cook --release --recipe-path recipe.json
 COPY . .
 RUN cargo build --release --bin zero-scale-proxy
 
-FROM alpine:3.16.0 as runner
+FROM alpine:3.16.1 as runner
 RUN apk add --no-cache tini=0.19.0-r0
 COPY --from=builder /app/target/release/zero-scale-proxy /usr/local/bin/
 ENTRYPOINT ["tini", "--"]
