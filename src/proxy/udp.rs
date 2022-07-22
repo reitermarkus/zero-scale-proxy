@@ -7,7 +7,7 @@ use tokio::net::UdpSocket;
 use tokio::sync::mpsc::{self, UnboundedSender, UnboundedReceiver};
 use tokio::time::{Duration, timeout};
 
-use crate::ZeroScaler;
+use crate::{ZeroScaler, ProxyType};
 use super::middleware;
 
 async fn listener(host: Ipv4Addr, port: u16) -> anyhow::Result<Arc<UdpSocket>> {
@@ -105,7 +105,7 @@ pub async fn udp_proxy(
   host: Ipv4Addr,
   port: u16,
   scaler: Arc<ZeroScaler>,
-  proxy_type: Option<String>,
+  proxy_type: ProxyType,
   timeout_duration: Duration
 ) -> anyhow::Result<()> {
   let upstream = format!("{}:{}", host, port);
@@ -130,7 +130,6 @@ pub async fn udp_proxy(
     let upstream_addr = (host.to_owned(), port);
     let downstream_send = Arc::clone(&downstream_recv);
     let scaler = scaler.clone();
-    let proxy_type = proxy_type.clone();
 
     let make_sender = || {
       let (sender, mut receiver) = mpsc::unbounded_channel::<Vec<u8>>();
@@ -144,6 +143,7 @@ pub async fn udp_proxy(
 
         #[cfg(target_os = "linux")]
         let socket = {
+          // https://www.kernel.org/doc/html/v5.12/networking/tproxy.html
           transparent = std::env::var("TRANSPARENT_IP").ok().map(|s| s == "true").unwrap_or(false);
 
           if transparent {
@@ -186,8 +186,8 @@ pub async fn udp_proxy(
         let upstream_send = Arc::clone(&upstream);
         let upstream_recv = Arc::clone(&upstream);
 
-        let active_connection = match proxy_type.as_deref() {
-          Some("csgo") => {
+        let active_connection = match proxy_type {
+          ProxyType::Csgo => {
             let middleware_res = timeout(
               timeout_duration,
               middleware::csgo::udp(
@@ -206,7 +206,7 @@ pub async fn udp_proxy(
               Ok((false, active_connection)) => active_connection,
             }
           },
-          Some("7d2d") => {
+          ProxyType::Sdtd => {
             let middleware_res = timeout(
               timeout_duration,
               middleware::sdtd::udp(
@@ -225,7 +225,7 @@ pub async fn udp_proxy(
               Ok((false, active_connection)) => active_connection,
             }
           },
-          Some("teamspeak") => {
+          ProxyType::TeamSpeak => {
             Some(scaler.register_connection(downstream_addr).await)
           },
           _ => {

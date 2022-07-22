@@ -14,6 +14,8 @@ pub(crate) use zero_scaler::{ZeroScaler, ActiveConnection};
 mod idle_checker;
 pub(crate) use idle_checker::IdleChecker;
 
+mod proxy_type;
+use proxy_type::ProxyType;
 mod proxy;
 
 fn parse_port(port: &str) -> (u16, String) {
@@ -72,7 +74,17 @@ async fn main() -> anyhow::Result<()> {
   let timeout: Duration = Duration::from_secs(
     env::var("TIMEOUT").map(|t| t.parse::<u64>().expect("TIMEOUT is not a number")).unwrap_or(600)
   );
-  let proxy_type = env::var("PROXY_TYPE").ok();
+
+  let proxy_type = match env::var("PROXY_TYPE") {
+    Ok(proxy_type) => match proxy_type.parse() {
+      Ok(proxy_type) => proxy_type,
+      Err(_) => {
+        log::warn!("Unknown proxy type '{}', reverting to default proxy type.", proxy_type);
+        ProxyType::default()
+      }
+    },
+    Err(_) => ProxyType::default(),
+  };
 
   let upstream_ip = env::var("UPSTREAM_IP").ok().map(|ip| ip.parse::<Ipv4Addr>().expect("UPSTREAM_IP is invalid"));
   let ports = env::var("PORTS").ok();
@@ -91,11 +103,11 @@ async fn main() -> anyhow::Result<()> {
 
   let proxies = try_join_all(upstreams.into_iter().map(|(ip, (port, protocol))| match protocol.as_ref() {
     "tcp" => {
-      Either::Left(proxy::tcp(ip, port, scaler.as_ref(), proxy_type.clone()))
+      Either::Left(proxy::tcp(ip, port, scaler.as_ref(), proxy_type))
     },
     "udp" => {
       let socket_timeout = Duration::from_secs(60);
-      Either::Right(proxy::udp(ip, port, scaler.clone(), proxy_type.clone(), socket_timeout))
+      Either::Right(proxy::udp(ip, port, scaler.clone(), proxy_type, socket_timeout))
     },
     _ => unreachable!(),
   }));

@@ -7,7 +7,7 @@ use tokio::io;
 use tokio::net::{TcpListener, TcpStream};
 use tokio_stream::wrappers::TcpListenerStream;
 
-use crate::ZeroScaler;
+use crate::{ZeroScaler, ProxyType};
 use super::middleware;
 
 async fn proxy(mut downstream: TcpStream, mut upstream: TcpStream) -> io::Result<()> {
@@ -22,7 +22,7 @@ async fn listener_stream(host: Ipv4Addr, port: u16) -> anyhow::Result<TcpListene
   Ok(TcpListenerStream::new(listener))
 }
 
-pub async fn tcp_proxy(host: Ipv4Addr, port: u16, scaler: &ZeroScaler, proxy_type: Option<String>) -> anyhow::Result<()> {
+pub async fn tcp_proxy(host: Ipv4Addr, port: u16, scaler: &ZeroScaler, proxy_type: ProxyType) -> anyhow::Result<()> {
   let listener_stream = listener_stream(Ipv4Addr::new(0, 0, 0, 0), port).await?;
 
   listener_stream.err_into::<anyhow::Error>().try_for_each_concurrent(None, |downstream| async {
@@ -41,8 +41,8 @@ pub async fn tcp_proxy(host: Ipv4Addr, port: u16, scaler: &ZeroScaler, proxy_typ
         None
       };
 
-      let (downstream, mut upstream, active_connection) = match proxy_type.as_deref() {
-        Some("minecraft") => {
+      let (downstream, mut upstream, active_connection) = match proxy_type {
+        ProxyType::Minecraft => {
           let minecraft_favicon = env::var("MINECRAFT_FAVICON").ok();
 
           match middleware::minecraft::tcp(downstream, upstream, replicas.wanted, scaler, minecraft_favicon.as_deref()).await.context("Error in Minecraft middleware")? {
