@@ -6,7 +6,7 @@ edition = "2021"
 publish = false
 
 [dependencies]
-a2s = { version = "0.5.1", features = ["async"] }
+a2s = { version = "0.6.0", features = ["async"] }
 defer = "0.1.0"
 futures = "0.3.21"
 k8s-openapi = { version = "0.15.0", features = ["v1_21"] }
