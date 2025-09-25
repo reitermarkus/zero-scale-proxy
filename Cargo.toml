@@ -10,7 +10,7 @@ a2s = { version = "0.5.1", features = ["async"] }
 defer = "0.1.0"
 futures = "0.3.21"
 k8s-openapi = { version = "0.15.0", features = ["v1_21"] }
-kube = { version = "0.74.0", default-features = false, features = ["client", "rustls-tls"] }
+kube = { version = "2.0.0", default-features = false, features = ["client", "rustls-tls"] }
 minecraft-protocol = "0.1.0"
 minecraft-protocol-derive = "0.0.0"
 tokio = { version = "1.17.0", features = ["io-std", "io-util", "macros", "net", "rt-multi-thread", "sync"] }
