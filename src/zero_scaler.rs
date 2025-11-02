@@ -1,14 +1,25 @@
-use std::net::SocketAddr;
-use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
+use std::{
+  net::SocketAddr,
+  sync::{
+    atomic::{AtomicUsize, Ordering},
+    Arc,
+  },
+};
 
 use atomic_instant::AtomicInstant;
 use futures::prelude::*;
-use k8s_openapi::api::apps::v1::Deployment;
-use k8s_openapi::api::autoscaling::v1::Scale;
-use k8s_openapi::api::autoscaling::v1::ScaleSpec;
-use k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
-use kube::{Api, api::{ListParams, Patch, PatchParams, WatchEvent}, Client};
-use tokio::time::{Duration};
+use k8s_openapi::{
+  api::{
+    apps::v1::Deployment,
+    autoscaling::v1::{Scale, ScaleSpec},
+  },
+  apimachinery::pkg::apis::meta::v1::ObjectMeta,
+};
+use kube::{
+  api::{ListParams, Patch, PatchParams, WatchEvent},
+  Api, Client,
+};
+use tokio::time::Duration;
 
 #[derive(Debug)]
 pub struct ReplicaStatus {
@@ -25,10 +36,7 @@ pub struct ActiveConnections {
 
 impl ActiveConnections {
   pub fn new() -> Arc<Self> {
-    Arc::new(Self {
-      count: AtomicUsize::new(0),
-      last_update: AtomicInstant::now(),
-    })
+    Arc::new(Self { count: AtomicUsize::new(0), last_update: AtomicInstant::now() })
   }
 
   pub fn count(&self) -> usize {
@@ -57,10 +65,7 @@ impl ActiveConnection {
     log::info!("Peer {} connected, {} connections active.", peer_addr, count);
     connections.last_update.set_now();
 
-    Self {
-      peer_addr,
-      connections,
-    }
+    Self { peer_addr, connections }
   }
 }
 
@@ -81,11 +86,7 @@ pub struct ZeroScaler {
 
 impl ZeroScaler {
   pub fn new(deployment: String, namespace: String) -> Self {
-    Self {
-      deployment,
-      namespace,
-      active_connections: ActiveConnections::new(),
-    }
+    Self { deployment, namespace, active_connections: ActiveConnections::new() }
   }
 
   pub async fn deployments(&self) -> Result<Api<Deployment>, kube::Error> {
@@ -104,41 +105,28 @@ impl ZeroScaler {
 
   pub async fn replica_status(&self) -> ReplicaStatus {
     let deployments = self.deployments().await;
-    let deployment = if let Ok(deployments) = deployments {
-      deployments.get(&self.deployment).await.ok()
-    } else {
-      None
-    };
+    let deployment =
+      if let Ok(deployments) = deployments { deployments.get(&self.deployment).await.ok() } else { None };
     let deployment_status = deployment.and_then(|d| d.status);
     let replicas = deployment_status.as_ref().and_then(|s| s.replicas).unwrap_or(0);
     let ready_replicas = deployment_status.as_ref().and_then(|s| s.ready_replicas).unwrap_or(0);
     let available_replicas = deployment_status.as_ref().and_then(|s| s.available_replicas).unwrap_or(0);
     log::debug!("{}/{} replicas ready, {}/{} available.", ready_replicas, replicas, available_replicas, replicas);
 
-    ReplicaStatus {
-      ready: ready_replicas as usize,
-      available: available_replicas as usize,
-      wanted: replicas as usize,
-    }
+    ReplicaStatus { ready: ready_replicas as usize, available: available_replicas as usize, wanted: replicas as usize }
   }
 
   pub async fn scale_to(&self, replicas: i32) -> Result<(), kube::Error> {
-    let patch_params = PatchParams {
-      force: true,
-      field_manager: Some("zero-scale-proxy".into()),
-      ..Default::default()
-    };
+    let patch_params =
+      PatchParams { force: true, field_manager: Some("zero-scale-proxy".into()), ..Default::default() };
     let patch = Scale {
       metadata: ObjectMeta { name: Some(self.deployment.to_owned()), ..Default::default() },
-      spec: Some(ScaleSpec {
-        replicas: Some(replicas),
-      }),
+      spec: Some(ScaleSpec { replicas: Some(replicas) }),
       ..Default::default()
     };
     self.deployments().await?.patch_scale(&self.deployment, &patch_params, &Patch::Apply(patch)).await?;
 
-    let lp = ListParams::default()
-      .fields(&format!("metadata.name={}", self.deployment));
+    let lp = ListParams::default().fields(&format!("metadata.name={}", self.deployment));
 
     let mut stream = self.deployments().await?.watch(&lp, "0").await?.boxed();
 

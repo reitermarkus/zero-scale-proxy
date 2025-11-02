@@ -1,14 +1,13 @@
-use std::env;
-use std::net::SocketAddr;
-use std::sync::Arc;
+use std::{env, net::SocketAddr, sync::Arc};
 
-use a2s::info::{Info, ServerType, ServerOS, ExtendedServerInfo};
-use a2s::rules::Rule;
-use tokio::net::UdpSocket;
-use tokio::sync::mpsc::UnboundedReceiver;
+use a2s::{
+  info::{ExtendedServerInfo, Info, ServerOS, ServerType},
+  rules::Rule,
+};
+use tokio::{net::UdpSocket, sync::mpsc::UnboundedReceiver};
 
-use crate::{ZeroScaler, ActiveConnection};
 use super::a2s_based;
+use crate::{ActiveConnection, ZeroScaler};
 
 pub fn status_response(state: &str) -> Info {
   Info {
@@ -51,5 +50,16 @@ pub async fn udp(
   scaler: Arc<ZeroScaler>,
   transparent: bool,
 ) -> (bool, Option<ActiveConnection>) {
-  a2s_based::udp(receiver, downstream_send, downstream_addr, upstream_recv, upstream_send, scaler, status_response, rules_response, transparent).await
+  a2s_based::udp(
+    receiver,
+    downstream_send,
+    downstream_addr,
+    upstream_recv,
+    upstream_send,
+    scaler,
+    status_response,
+    rules_response,
+    transparent,
+  )
+  .await
 }

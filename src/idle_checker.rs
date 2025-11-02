@@ -1,4 +1,4 @@
-use tokio::time::{Duration, sleep};
+use tokio::time::{sleep, Duration};
 
 use crate::ZeroScaler;
 
@@ -9,9 +9,7 @@ pub struct IdleChecker {
 
 impl IdleChecker {
   pub fn new(timeout: Duration) -> Self {
-    Self {
-      timeout,
-    }
+    Self { timeout }
   }
 
   pub async fn start(&self, scaler: &ZeroScaler) {
@@ -42,24 +40,21 @@ impl IdleChecker {
                 Ok(_) => log::info!("Scaled down successfully."),
                 Err(err) => {
                   log::error!("Error scaling down: {}", err);
-                }
+                },
               }
             }
           },
           Err(err) => {
             log::error!("Failed getting replica count: {}", err);
-          }
+          },
         }
       } else {
-        let connection_plural = if connection_count == 1 {
-          "connection is"
-        } else {
-          "connections are"
-        };
+        let connection_plural = if connection_count == 1 { "connection is" } else { "connections are" };
 
         log::info!(
           "{} {} active, next idle check in {} seconds.",
-          connection_count, connection_plural,
+          connection_count,
+          connection_plural,
           timeout.as_secs()
         );
       }

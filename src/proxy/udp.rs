@@ -1,14 +1,18 @@
-use std::collections::HashMap;
-use std::net::{Ipv4Addr, SocketAddr};
-use std::sync::Arc;
+use std::{
+  collections::HashMap,
+  net::{Ipv4Addr, SocketAddr},
+  sync::Arc,
+};
 
 use anyhow::Context;
-use tokio::net::UdpSocket;
-use tokio::sync::mpsc::{self, UnboundedSender, UnboundedReceiver};
-use tokio::time::{Duration, timeout};
+use tokio::{
+  net::UdpSocket,
+  sync::mpsc::{self, UnboundedReceiver, UnboundedSender},
+  time::{timeout, Duration},
+};
 
-use crate::{ZeroScaler, ProxyType};
 use super::middleware;
+use crate::{ProxyType, ZeroScaler};
 
 async fn listener(host: Ipv4Addr, port: u16) -> anyhow::Result<Arc<UdpSocket>> {
   let downstream = UdpSocket::bind((host, port)).await?;
@@ -20,15 +24,16 @@ async fn listener(host: Ipv4Addr, port: u16) -> anyhow::Result<Arc<UdpSocket>> {
 async fn forwarder(
   mut downstream_recv: UnboundedReceiver<Vec<u8>>,
   upstream_send: Arc<UdpSocket>,
-  timeout_duration: Duration
+  timeout_duration: Duration,
 ) -> anyhow::Result<()> {
   loop {
     let forward = async {
-      let send_buf = timeout(timeout_duration, downstream_recv.recv()).await
-        .context("Timed out receiving from downstream")?;
+      let send_buf =
+        timeout(timeout_duration, downstream_recv.recv()).await.context("Timed out receiving from downstream")?;
 
       if let Some(send_buf) = send_buf {
-        timeout(timeout_duration, upstream_send.send(&send_buf)).await
+        timeout(timeout_duration, upstream_send.send(&send_buf))
+          .await
           .context("Timed out sending to upstream")?
           .context("Error sending to upstream")?;
 
@@ -51,16 +56,18 @@ async fn backwarder(
   upstream_recv: Arc<UdpSocket>,
   downstream_send: Arc<UdpSocket>,
   downstream_addr: SocketAddr,
-  timeout_duration: Duration
+  timeout_duration: Duration,
 ) -> anyhow::Result<()> {
   let mut recv_buf = vec![0; 64 * 1024];
   loop {
     let backward = async {
-      let (size, _) = timeout(timeout_duration, upstream_recv.recv_from(&mut recv_buf)).await
+      let (size, _) = timeout(timeout_duration, upstream_recv.recv_from(&mut recv_buf))
+        .await
         .context("Timed out receiving from upstream")?
         .context("Error receiving from upstream")?;
 
-      timeout(timeout_duration, downstream_send.send_to(&recv_buf[..size], downstream_addr)).await
+      timeout(timeout_duration, downstream_send.send_to(&recv_buf[..size], downstream_addr))
+        .await
         .context("Timed out sending to downstream")?
         .context("Error sending to downstream")?;
 
@@ -81,7 +88,7 @@ async fn proxy(
   upstream_recv: Arc<UdpSocket>,
   upstream_send: Arc<UdpSocket>,
   timeout_duration: Duration,
-  transparent: bool
+  transparent: bool,
 ) {
   if transparent {
     if let Err(err) = forwarder(downstream_recv, upstream_send, timeout_duration).await {
@@ -106,7 +113,7 @@ pub async fn udp_proxy(
   port: u16,
   scaler: Arc<ZeroScaler>,
   proxy_type: ProxyType,
-  timeout_duration: Duration
+  timeout_duration: Duration,
 ) -> anyhow::Result<()> {
   let upstream = format!("{}:{}", host, port);
 
@@ -116,13 +123,14 @@ pub async fn udp_proxy(
 
   loop {
     let mut buf = vec![0; 64 * 1024];
-    let (size, downstream_addr) = match downstream_recv.recv_from(&mut buf).await.context("Error receiving from downstream") {
-      Ok(ok) => ok,
-      Err(err) => {
-        log::error!("UDP recv_from failed: {}", err);
-        continue
-      },
-    };
+    let (size, downstream_addr) =
+      match downstream_recv.recv_from(&mut buf).await.context("Error receiving from downstream") {
+        Ok(ok) => ok,
+        Err(err) => {
+          log::error!("UDP recv_from failed: {}", err);
+          continue
+        },
+      };
     buf.truncate(size);
 
     // log::debug!("Cached senders for {}: {}", upstream, senders.len());
@@ -197,9 +205,10 @@ pub async fn udp_proxy(
                 upstream_recv.clone(),
                 upstream_send.clone(),
                 scaler.clone(),
-                transparent
-              )
-            ).await;
+                transparent,
+              ),
+            )
+            .await;
 
             match middleware_res {
               Ok((true, _)) | Err(_) => return,
@@ -216,24 +225,22 @@ pub async fn udp_proxy(
                 upstream_recv.clone(),
                 upstream_send.clone(),
                 scaler.clone(),
-                transparent
-              )
-            ).await;
+                transparent,
+              ),
+            )
+            .await;
 
             match middleware_res {
               Ok((true, _)) | Err(_) => return,
               Ok((false, active_connection)) => active_connection,
             }
           },
-          ProxyType::TeamSpeak => {
-            Some(scaler.register_connection(downstream_addr).await)
-          },
-          _ => {
-            Some(scaler.register_connection(downstream_addr).await)
-          },
+          ProxyType::TeamSpeak => Some(scaler.register_connection(downstream_addr).await),
+          _ => Some(scaler.register_connection(downstream_addr).await),
         };
 
-        proxy(receiver, downstream_send, downstream_addr, upstream_recv, upstream_send, timeout_duration, transparent).await;
+        proxy(receiver, downstream_send, downstream_addr, upstream_recv, upstream_send, timeout_duration, transparent)
+          .await;
         drop(active_connection)
       });
 

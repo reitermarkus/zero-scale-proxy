@@ -2,25 +2,27 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::anyhow;
 use futures::future::{self, Either};
-use minecraft_protocol::error::DecodeError;
-use minecraft_protocol::encoder::Encoder;
-use minecraft_protocol::data::chat::Payload;
-use minecraft_protocol::data::chat::Message;
-use minecraft_protocol::data::server_status::OnlinePlayers;
-use minecraft_protocol::data::server_status::ServerVersion;
-use minecraft_protocol::data::server_status::ServerStatus;
-use minecraft_protocol::packet::Packet;
-use minecraft_protocol::version::v1_14_4::handshake::HandshakeServerBoundPacket;
-use minecraft_protocol::version::v1_14_4::login::LoginServerBoundPacket;
-use minecraft_protocol::version::v1_14_4::login::LoginDisconnect;
-use minecraft_protocol::version::v1_14_4::status::StatusServerBoundPacket;
-use minecraft_protocol::version::v1_14_4::status::StatusResponse;
-use minecraft_protocol::version::v1_14_4::status::PingResponse;
-use tokio::net::TcpStream;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use minecraft_protocol::{
+  data::{
+    chat::{Message, Payload},
+    server_status::{OnlinePlayers, ServerStatus, ServerVersion},
+  },
+  encoder::Encoder,
+  error::DecodeError,
+  packet::Packet,
+  version::v1_14_4::{
+    handshake::HandshakeServerBoundPacket,
+    login::{LoginDisconnect, LoginServerBoundPacket},
+    status::{PingResponse, StatusResponse, StatusServerBoundPacket},
+  },
+};
+use tokio::{
+  io::{AsyncReadExt, AsyncWriteExt},
+  net::TcpStream,
+};
 
-use crate::{ZeroScaler, ActiveConnection};
 use super::{IDLE_MSG, STARTING_MSG};
+use crate::{ActiveConnection, ZeroScaler};
 
 async fn read_packet(buf: &mut Vec<u8>, source: &mut TcpStream, compression: bool) -> anyhow::Result<Packet> {
   let mut total_bytes_needed = 1;
@@ -35,12 +37,17 @@ async fn read_packet(buf: &mut Vec<u8>, source: &mut TcpStream, compression: boo
       Err(DecodeError::Incomplete { bytes_needed }) => {
         total_bytes_needed += bytes_needed;
       },
-      err => return err.map_err(|e| anyhow!("Error forwarding packet: {:?}", e))
+      err => return err.map_err(|e| anyhow!("Error forwarding packet: {:?}", e)),
     }
   }
 }
 
-async fn proxy_packet(buf: &mut Vec<u8>, source: &mut TcpStream, destination: &mut TcpStream, compression: bool) -> anyhow::Result<Packet> {
+async fn proxy_packet(
+  buf: &mut Vec<u8>,
+  source: &mut TcpStream,
+  destination: &mut TcpStream,
+  compression: bool,
+) -> anyhow::Result<Packet> {
   log::trace!("proxy_packet");
   let packet = read_packet(buf, source, compression).await?;
   destination.write_all(buf).await.map_err(|e| anyhow!("Error forwarding packet: {:?}", e))?;
@@ -48,66 +55,47 @@ async fn proxy_packet(buf: &mut Vec<u8>, source: &mut TcpStream, destination: &m
 }
 
 fn status_response(state: &str, message: &str, favicon: Option<&str>) -> Packet {
-  let version = ServerVersion {
-    name: String::from(state),
-    protocol: 0,
-  };
+  let version = ServerVersion { name: String::from(state), protocol: 0 };
 
-  let players = OnlinePlayers {
-    online: 0,
-    max: 0,
-    sample: vec![],
-  };
+  let players = OnlinePlayers { online: 0, max: 0, sample: vec![] };
 
   let favicon = favicon.map(|data| format!("data:image/png;base64,{}", data));
 
-  let server_status = ServerStatus {
-    version,
-    description: Message::new(Payload::text(message)),
-    players,
-    favicon,
-  };
+  let server_status = ServerStatus { version, description: Message::new(Payload::text(message)), players, favicon };
 
   let status_response = StatusResponse { server_status };
 
   let mut data = Vec::new();
   status_response.encode(&mut data).unwrap();
 
-  Packet {
-    id: 0x00,
-    data,
-  }
+  Packet { id: 0x00, data }
 }
 
 fn ping_response() -> Packet {
-  let response = PingResponse {
-    time: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as u64
-  };
+  let response = PingResponse { time: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as u64 };
 
   let mut data = Vec::new();
   response.encode(&mut data).unwrap();
 
-  Packet {
-    id: 0x01,
-    data,
-  }
+  Packet { id: 0x01, data }
 }
 
 fn login_response() -> Packet {
-  let response = LoginDisconnect {
-    reason: Message::new(Payload::text(STARTING_MSG)),
-  };
+  let response = LoginDisconnect { reason: Message::new(Payload::text(STARTING_MSG)) };
 
   let mut data = Vec::new();
   response.encode(&mut data).unwrap();
 
-  Packet {
-    id: 0x00,
-    data,
-  }
+  Packet { id: 0x00, data }
 }
 
-pub async fn tcp(mut downstream: TcpStream, mut upstream: Option<TcpStream>, replicas: usize, scaler: &ZeroScaler, favicon: Option<&str>) -> anyhow::Result<Option<(TcpStream, Option<TcpStream>, Option<ActiveConnection>)>> {
+pub async fn tcp(
+  mut downstream: TcpStream,
+  mut upstream: Option<TcpStream>,
+  replicas: usize,
+  scaler: &ZeroScaler,
+  favicon: Option<&str>,
+) -> anyhow::Result<Option<(TcpStream, Option<TcpStream>, Option<ActiveConnection>)>> {
   let downstream_addr = downstream.peer_addr()?;
 
   let mut active_connection = None;
@@ -138,7 +126,7 @@ pub async fn tcp(mut downstream: TcpStream, mut upstream: Option<TcpStream>, rep
         match handshake {
           HandshakeServerBoundPacket::Handshake(handshake) => {
             state = handshake.next_state;
-          }
+          },
         }
       },
       1 => {
@@ -175,10 +163,12 @@ pub async fn tcp(mut downstream: TcpStream, mut upstream: Option<TcpStream>, rep
               downstream.write_all(&buf).await?;
             }
             return Ok(None)
-          }
+          },
         }
       },
-      2 => match LoginServerBoundPacket::decode(packet.id as u8, &mut packet.data.as_slice()).map_err(|e| anyhow!("{:?}", e))? {
+      2 => match LoginServerBoundPacket::decode(packet.id as u8, &mut packet.data.as_slice())
+        .map_err(|e| anyhow!("{:?}", e))?
+      {
         LoginServerBoundPacket::LoginStart(_) => {
           log::trace!("login");
 

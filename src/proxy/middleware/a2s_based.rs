@@ -1,42 +1,27 @@
-use std::net::SocketAddr;
-use std::sync::Arc;
-use std::io::{Cursor};
+use std::{io::Cursor, net::SocketAddr, sync::Arc};
 
-use a2s::info::{Info};
-use a2s::rules::Rule;
-use a2s::players::Player;
+use a2s::{info::Info, players::Player, rules::Rule};
 use anyhow::Context;
 use futures::TryFutureExt;
 use log::{log_enabled, Level::Debug};
-use tokio::net::UdpSocket;
-use tokio::sync::mpsc::UnboundedReceiver;
 use pretty_hex::PrettyHex;
+use tokio::{net::UdpSocket, sync::mpsc::UnboundedReceiver};
 
-use crate::{ZeroScaler, ActiveConnection};
 use super::{IDLE_MSG, STARTING_MSG};
+use crate::{ActiveConnection, ZeroScaler};
 
 const INFO_REQUEST: [u8; 25] = [
-  0xff, 0xff, 0xff, 0xff, b'T',
-  b'S', b'o', b'u', b'r', b'c', b'e', b' ', b'E', b'n', b'g', b'i', b'n', b'e', b' ', b'Q', b'u', b'e', b'r', b'y',
-  0x00,
+  0xff, 0xff, 0xff, 0xff, b'T', b'S', b'o', b'u', b'r', b'c', b'e', b' ', b'E', b'n', b'g', b'i', b'n', b'e', b' ',
+  b'Q', b'u', b'e', b'r', b'y', 0x00,
 ];
-const PLAYER_REQUEST: [u8; 5] = [
-  0xff, 0xff, 0xff, 0xff, b'U',
-];
-const RULES_REQUEST: [u8; 5] = [
-  0xff, 0xff, 0xff, 0xff, b'V',
-];
+const PLAYER_REQUEST: [u8; 5] = [0xff, 0xff, 0xff, 0xff, b'U'];
+const RULES_REQUEST: [u8; 5] = [0xff, 0xff, 0xff, 0xff, b'V'];
 
 const SDTD_LOGIN_REQUEST: [u8; 5] = [0x08, 0x07, 0x00, 0x00, 0x00];
-const CSGO_CONNECT_REQUEST: [u8; 12] = [
-  0xff, 0xff, 0xff, 0xff, 0x71,
-  0x63, 0x6f, 0x6e , 0x6e, 0x65, 0x63, 0x74
-];
+const CSGO_CONNECT_REQUEST: [u8; 12] = [0xff, 0xff, 0xff, 0xff, 0x71, 0x63, 0x6f, 0x6e, 0x6e, 0x65, 0x63, 0x74];
 const CSGO_LAN_SEARCH_REQUEST: [u8; 33] = [
-  0xff, 0xff, 0xff, 0xff,
-  0x00, 0x00, 0x00, 0x00, 0xf5, 0x35, 0x00, 0x00, 0x0d,
-  0x00, 0x00, 0x00, 0x00, b'L', b'a', b'n', b'S', b'e', b'a', b'r', b'c', b'h', 0x00, 0x0b, 0x0b,
-  0x00, 0x00, 0x00, 0x00,
+  0xff, 0xff, 0xff, 0xff, 0x00, 0x00, 0x00, 0x00, 0xf5, 0x35, 0x00, 0x00, 0x0d, 0x00, 0x00, 0x00, 0x00, b'L', b'a',
+  b'n', b'S', b'e', b'a', b'r', b'c', b'h', 0x00, 0x0b, 0x0b, 0x00, 0x00, 0x00, 0x00,
 ];
 
 pub async fn udp(
@@ -55,16 +40,17 @@ pub async fn udp(
     None => return (true, None),
   };
 
-  let send_fut = async {
-    upstream_send.send(&send_buf).await.context("Error sending to upstream")
-  };
+  let send_fut = async { upstream_send.send(&send_buf).await.context("Error sending to upstream") };
   let recv_fut = async move {
     let mut recv_buf = vec![0; 64 * 1024];
 
     if transparent {
       Ok(recv_buf[..4].to_vec())
     } else {
-      upstream_recv.recv_from(&mut recv_buf).await.context("Error receiving from upstream")
+      upstream_recv
+        .recv_from(&mut recv_buf)
+        .await
+        .context("Error receiving from upstream")
         .map(|(size, _)| recv_buf[..size].to_vec())
     }
   };
@@ -76,7 +62,6 @@ pub async fn udp(
     if replicas.wanted == 0 {
       (true, None, status_response("idle").to_bytes())
     } else {
-
       match send_fut.and_then(|_| recv_fut).await {
         Ok(ok) => {
           if log_enabled!(Debug) && !transparent {
@@ -94,17 +79,9 @@ pub async fn udp(
 
     let replicas = scaler.replica_status().await;
     if replicas.wanted == 0 {
-      (
-        true,
-        None,
-        Rule::vec_to_bytes(rules_response(IDLE_MSG))
-      )
+      (true, None, Rule::vec_to_bytes(rules_response(IDLE_MSG)))
     } else if replicas.ready == 0 {
-      (
-        true,
-        None,
-        Rule::vec_to_bytes(rules_response(STARTING_MSG))
-      )
+      (true, None, Rule::vec_to_bytes(rules_response(STARTING_MSG)))
     } else {
       match send_fut.and_then(|_| recv_fut).await {
         Ok(ok) => {
@@ -115,11 +92,7 @@ pub async fn udp(
 
           (false, None, ok)
         },
-        Err(err) => (
-          true,
-          None,
-          Rule::vec_to_bytes(rules_response(&format!("Server Error: {}", err)))
-        ),
+        Err(err) => (true, None, Rule::vec_to_bytes(rules_response(&format!("Server Error: {}", err)))),
       }
     }
   } else if send_buf.get(0..PLAYER_REQUEST.len()) == Some(&PLAYER_REQUEST) {
