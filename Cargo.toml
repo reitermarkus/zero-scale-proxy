@@ -16,7 +16,7 @@ minecraft-protocol-derive = "0.0.0"
 tokio = { version = "1.17.0", features = ["io-std", "io-util", "macros", "net", "rt-multi-thread", "sync"] }
 tokio-stream = { version = "0.1.9", features = ["net"] }
 log = "0.4.14"
-env_logger = "0.9.0"
+env_logger = "0.11.0"
 anyhow = "1.0.58"
 pretty-hex = "0.3.0"
 atomic-instant = "0.1.1"
